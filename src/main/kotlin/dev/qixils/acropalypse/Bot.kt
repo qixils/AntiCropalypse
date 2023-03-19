@@ -22,10 +22,11 @@ import net.dv8tion.jda.api.entities.Guild
 import net.dv8tion.jda.api.entities.Message
 import net.dv8tion.jda.api.entities.channel.attribute.IPermissionContainer
 import net.dv8tion.jda.api.entities.channel.attribute.IThreadContainer
-import net.dv8tion.jda.api.entities.channel.concrete.ForumChannel
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel
 import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent
+import net.dv8tion.jda.api.exceptions.ErrorResponseException
+import net.dv8tion.jda.api.requests.ErrorResponse
 import net.dv8tion.jda.api.requests.GatewayIntent
 import net.dv8tion.jda.api.utils.messages.MessageRequest
 import net.dv8tion.jda.internal.utils.PermissionUtil
@@ -36,8 +37,6 @@ import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.toJavaDuration
-
-// TODO: messages are getting scanned a bunch of times
 
 @OptIn(ExperimentalSerializationApi::class)
 object Bot {
@@ -186,7 +185,7 @@ object Bot {
             if (event.author.idLong in state.disabledScans) return@listener
             val confidence = state.deletionThreshold[event.guild.idLong] ?: ScanConfidence.DEFAULT
             val result = scanMessage(event.message, confidence)
-            logger.info("(debug) ${result.name}")
+            logger.debug("Active scan result: $result (threshold: $confidence) for message ${event.message.idLong} in #${event.channel.name} (${event.channel.idLong})")
             if (result >= confidence) {
                 if (false) { // TODO: temp
                     event.message.delete().queue()
@@ -246,30 +245,41 @@ object Bot {
     }
 
     private suspend fun scanMessage(message: Message, threshold: ScanConfidence = ScanConfidence.CERTAIN): ScanConfidence {
+        logger.debug("Scanning message ${message.jumpUrl} (threshold: ${threshold.name})")
         var confidence = ScanConfidence.NONE
         for (attachment in message.attachments) {
             if (attachment.isImage) {
+                logger.debug("Scanning image attachment ${attachment.url} in message ${message.jumpUrl}")
                 val scanResult = scanner.scan(attachment.url)
                 if (scanResult == ScanConfidence.ERROR)
                     logger.warn("Unexpected error for attachment ${attachment.url} in message ${message.jumpUrl}")
                 confidence = max(confidence, scanResult)
-                if (confidence >= threshold) return confidence
+                if (confidence >= threshold) {
+                    logger.info("Found image with confidence ${confidence.name} in message ${message.jumpUrl}")
+                    return confidence
+                }
             }
         }
         for (match in urlPattern.matcher(message.contentRaw).results()) {
+            logger.debug("Scanning URL ${match.group()} in message ${message.jumpUrl}")
             confidence = max(confidence, scanner.scan(match.group()))
-            if (confidence >= threshold) return confidence
+            if (confidence >= threshold) {
+                logger.info("Found image with confidence ${confidence.name} in message ${message.jumpUrl}")
+                return confidence
+            }
         }
         return confidence
     }
 
     private suspend fun scan(guild: Guild) {
+        logger.info("Scanning guild ${guild.name} (${guild.id})")
         val scanState = state.inProgressScans[guild.idLong] ?: run {
             logger.error("No scan state found for guild ${guild.name} (${guild.id})")
             return
         }
         val threshold = scanState.threshold
         for (channel in guild.channels.sortedBy { it.idLong }.dropWhile { it.idLong < scanState.lastChannel }) {
+            logger.debug("Possibly scanning channel ${channel.name} (${channel.id})")
             if (channel.idLong != scanState.lastChannel) {
                 scanState.lastChannel = channel.idLong
                 scanState.lastMessage = 0
@@ -290,13 +300,18 @@ object Bot {
                 continue
             }
             // scan channel and threads
+            logger.debug("Scanning channel ${channel.name} (${channel.id})")
             if (channel is GuildMessageChannel && scanState.lastThread == 0L)
                 scan(channel, scanState)
             if (channel is IThreadContainer) {
                 val threads = channel.threadChannels.toMutableList()
                 threads += channel.retrieveArchivedPublicThreadChannels().await()
-                if (channel !is ForumChannel)
+                try {
                     threads += channel.retrieveArchivedPrivateJoinedThreadChannels().await() // TODO: search through more private threads
+                } catch (e: ErrorResponseException) {
+                    if (e.errorResponse != ErrorResponse.INVALID_CHANNEL_TYPE)
+                        logger.error("Unexpected error while retrieving private threads", e)
+                }
                 for (thread in threads.sortedBy { it.idLong }.dropWhile { it.idLong < scanState.lastThread }) {
                     if (thread.idLong != scanState.lastThread) {
                         scanState.lastThread = thread.idLong
@@ -346,18 +361,22 @@ object Bot {
     }
 
     private suspend fun scan(channel: GuildMessageChannel, scanState: ScanState) {
+        logger.debug("Scanning channel ${channel.name} (${channel.id})")
         val threshold = scanState.threshold
         // skip channels where we don't have permission to read messages, manage messages, and view message history
         if (channel.idLong != scanState.lastChannel) scanState.lastMessage = 0
         scanState.lastChannel = channel.idLong
         while (true) {
+            logger.debug("Scanning messages in ${channel.name} (${channel.id}) after ${scanState.lastMessage}")
             val messages = channel.getHistoryAfter(scanState.lastMessage, 100).await()
             if (messages.isEmpty) break
-            for (message in messages.retrievedHistory) {
+            // dropWhile is included just in case the first result is the last message we scanned?
+            // I don't think this should happen but IDK
+            for (message in messages.retrievedHistory.sortedBy { it.idLong }.dropWhile { it.idLong <= scanState.lastMessage }) {
                 val result = scanMessage(message, threshold ?: ScanConfidence.CERTAIN)
                 if (threshold != null && result >= threshold) {
                     // TODO message.delete().queue()
-                    logger.info("Deleted message in #${channel.name} in ${channel.guild.name}: ${message.jumpUrl}")
+                    logger.debug("Deleted message in #${channel.name} in ${channel.guild.name}: ${message.jumpUrl}")
                 }
                 scanState.lastMessage = message.idLong
             }
