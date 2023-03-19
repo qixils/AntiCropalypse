@@ -12,6 +12,8 @@ import java.util.zip.Inflater
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.toJavaDuration
 
+private val logger by SLF4J("Scanner")
+
 fun ByteArray.toInt(big: Boolean): Int {
     return toLong(big).toInt()
 }
@@ -53,8 +55,9 @@ fun InputStream.parsePNGChunk(): Pair<ByteArray, ByteArray> {
     val size = readNBytes(4).toInt(true)
     val ctype = readNBytes(4)
     val body = readNBytes(size)
-    val csum = readNBytes(4).toLong(true)
-    if (csum != (ctype + body).crc32())
+    val crc = readNBytes(4).toLong(true)
+    val computedCRC = (ctype + body).crc32()
+    if (crc != computedCRC)
         throw IllegalStateException("CRC32 mismatch")
     return ctype to body
 }
@@ -121,6 +124,8 @@ class Scanner {
     companion object {
         private const val extension = ".png"
         private val header = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        private val IDAT = "IDAT".toByteArray()
+        private val IEND = "IEND".toByteArray()
     }
 
     private val http = OkHttpClient.Builder()
@@ -128,7 +133,6 @@ class Scanner {
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
-    private val logger by SLF4J
 
     /**
      * Checks if the image at the given URL is vulnerable to the Acropalypse exploit (CVE-2023-21036).
@@ -158,7 +162,7 @@ class Scanner {
                 try {
                     while (true) {
                         val (type, _) = stream.parsePNGChunk()
-                        if (type.contentEquals("IEND".toByteArray()))
+                        if (type.contentEquals(IEND))
                             break
                     }
                 } catch (e: IllegalStateException) {
@@ -170,22 +174,23 @@ class Scanner {
                     return@awaitWith ScanConfidence.ERROR
                 }
                 // grab the trailing data
-                val data = stream.readAllBytes()
-                if (data.isEmpty())
+                val trailing = stream.readAllBytes()
+                if (trailing.isEmpty())
                     return@awaitWith ScanConfidence.NONE
-                // find the start of the next IDAT chunk
-                val index = data.indexOf("IDAT".toByteArray())
-                if (index == -1)
-                    return@awaitWith ScanConfidence.LOW
                 // skip first 12 bytes in case they were part of a chunk boundary
-                var idat = data.sliceArray(12 until index - 8)
-                val idatStream = idat.inputStream()
+                val search = trailing.sliceArray(12 until trailing.size)
+                // find the start of the next IDAT chunk
+                val nextIDAT = search.indexOf(IDAT)
+                if (nextIDAT == -1)
+                    return@awaitWith ScanConfidence.LOW
+                var idat = search.sliceArray(0 until nextIDAT - 8)
+                val trailingStream = trailing.sliceArray(nextIDAT - 4 + 12 until trailing.size).inputStream()
                 try {
                     while (true) {
-                        val (type, body) = idatStream.parsePNGChunk()
-                        if (type.contentEquals("IDAT".toByteArray()))
+                        val (type, body) = trailingStream.parsePNGChunk()
+                        if (type.contentEquals(IDAT))
                             idat += body
-                        else if (type.contentEquals("IEND".toByteArray()))
+                        else if (type.contentEquals(IEND))
                             break
                         else {
                             logger.error("Invalid chunk type $type")
@@ -202,39 +207,46 @@ class Scanner {
                 // slice off the adler32
                 idat = idat.sliceArray(0 until idat.size - 4)
                 // build bitstream
-                val bits = mutableListOf<Boolean>()
+                val bits = mutableListOf<Int>()
                 for (byte in idat) {
                     for (bit in 0 until 8) {
-                        bits.add((byte.toInt() shr bit and 1) == 1)
+                        bits.add((byte.toInt() ushr bit) and 1)
                     }
                 }
                 // add some padding so we don't lose any bits
-                bits += List(8) { false }
+                bits += List(7) { 0 }
                 // reconstruct bit-shifted bytestreams
                 val byteOffsets = List(8) { i ->
                     val shifted = mutableListOf<Byte>()
                     for (j in i until bits.size - 7 step 8) {
                         var value = 0
                         for (k in 0 until 8) {
-                            value = value or (if (bits[j + k]) 1 else 0) shl k
+                            value = value or (bits[j + k] shl k)
                         }
                         shifted.add(value.toByte())
                     }
                     shifted.toByteArray()
                 }
                 // bit wrangling sanity checks
-                if (!byteOffsets[0].contentEquals(idat))
+                if (!byteOffsets[0].contentEquals(idat)) {
+                    logger.error("byteOffsets[0] != idat")
                     return@awaitWith ScanConfidence.HIGH
-                if (byteOffsets[1].contentEquals(idat))
+                }
+                if (byteOffsets[1].contentEquals(idat)) {
+                    logger.error("byteOffsets[1] == idat")
                     return@awaitWith ScanConfidence.HIGH
+                }
                 // prefix the stream with 32k of "X" so backrefs can work
-                val prefix = byteArrayOf(0x00.toByte()) + 0x8000.toBytes(2, true) + 0x8000.xor(0xffff).toBytes(2, true) + ByteArray(0x8000) { 'X'.code.toByte() }
+                var prefix = byteArrayOf(0x00.toByte())
+                prefix += 0x8000.toBytes(2, false)
+                prefix += 0x8000.xor(0xffff).toBytes(2, false)
+                prefix += ByteArray(0x8000) { 'X'.code.toByte() }
                 // scan for viable parses
                 for (i in idat.indices) {
                     val truncated = byteOffsets[i % 8].sliceArray(i / 8 until byteOffsets[i % 8].size)
                     if (truncated[0].toInt() and 7 != 0b100)
                         continue
-                    val decompressor = Inflater(true) // TODO: not sure if this matches the python "wbits=-15" parameter
+                    val decompressor = Inflater(true)
                     try {
                         val input = prefix + truncated
                         decompressor.setInput(prefix + truncated)

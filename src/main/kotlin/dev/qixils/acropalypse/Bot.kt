@@ -230,8 +230,6 @@ object Bot {
             }
             guildIdIterator.remove()
         }
-        // test
-        logger.error("debug: ${scanner.scan("https://cdn.discordapp.com/attachments/282238591248367626/892443890274148422/Screenshot_20210928-171309.png").name}")
     }
 
     @Synchronized
