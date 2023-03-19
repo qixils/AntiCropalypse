@@ -19,4 +19,8 @@ data class ScanState(
     var lastChannel: Long = 0,
     var lastThread: Long = 0,
     var lastMessage: Long = 0,
-)
+) {
+    fun tally(confidence: ScanConfidence) {
+        tally[confidence] = (tally[confidence] ?: 0) + 1
+    }
+}

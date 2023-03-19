@@ -72,8 +72,12 @@ object Bot {
         }
         // schedule state saving
         scheduler.scheduleAtFixedRate({
-            updateDisabledScanMap()
-            saveState()
+            try {
+                updateDisabledScanMap()
+                saveState()
+            } catch (e: Exception) {
+                logger.error("Failed to save state", e)
+            }
         }, 1, 1, TimeUnit.MINUTES)
         // build JDA
         jda = light(token, enableCoroutines=true) {
@@ -226,6 +230,8 @@ object Bot {
             }
             guildIdIterator.remove()
         }
+        // test
+        logger.error("debug: ${scanner.scan("https://cdn.discordapp.com/attachments/282238591248367626/892443890274148422/Screenshot_20210928-171309.png").name}")
     }
 
     @Synchronized
@@ -246,28 +252,31 @@ object Bot {
 
     private suspend fun scanMessage(message: Message, threshold: ScanConfidence = ScanConfidence.CERTAIN): ScanConfidence {
         logger.debug("Scanning message ${message.jumpUrl} (threshold: ${threshold.name})")
-        var confidence = ScanConfidence.NONE
+        var confidence = ScanConfidence.ERROR
         for (attachment in message.attachments) {
             if (attachment.isImage) {
                 logger.debug("Scanning image attachment ${attachment.url} in message ${message.jumpUrl}")
                 val scanResult = scanner.scan(attachment.url)
                 if (scanResult == ScanConfidence.ERROR)
-                    logger.warn("Unexpected error for attachment ${attachment.url} in message ${message.jumpUrl}")
+                    logger.warn("Unexpected error for attachment ${attachment.url} in message ${message.jumpUrl}; possibly corrupted")
                 confidence = max(confidence, scanResult)
-                if (confidence >= threshold) {
-                    logger.info("Found image with confidence ${confidence.name} in message ${message.jumpUrl}")
-                    return confidence
-                }
+                if (confidence >= threshold)
+                    return tally(message, confidence)
             }
         }
         for (match in urlPattern.matcher(message.contentRaw).results()) {
             logger.debug("Scanning URL ${match.group()} in message ${message.jumpUrl}")
             confidence = max(confidence, scanner.scan(match.group()))
-            if (confidence >= threshold) {
-                logger.info("Found image with confidence ${confidence.name} in message ${message.jumpUrl}")
-                return confidence
-            }
+            if (confidence >= threshold)
+                return tally(message, confidence)
         }
+        return tally(message, confidence)
+    }
+
+    private fun tally(message: Message, confidence: ScanConfidence): ScanConfidence {
+        if (confidence > ScanConfidence.NONE)
+            logger.info("Found image with confidence ${confidence.name} in message ${message.jumpUrl}")
+        state.inProgressScans[message.guild.idLong]?.tally(confidence)
         return confidence
     }
 
@@ -352,6 +361,7 @@ object Bot {
                 }
                 append("The full results, where the first column corresponds to the likelihood of an image being vulnerable, are as follows:\n>>> ")
                 for ((confidence, count) in scanState.tally) {
+                    // TODO?: if (threshold != null && confidence > threshold) continue
                     append(confidence.displayName).append(": ").append(count).append('\n')
                 }
             }).await()

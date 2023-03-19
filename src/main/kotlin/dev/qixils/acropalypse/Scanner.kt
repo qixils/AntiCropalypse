@@ -13,27 +13,31 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.toJavaDuration
 
 fun ByteArray.toInt(big: Boolean): Int {
-    // convert to signed int
-    var result = 0
+    return toLong(big).toInt()
+}
+
+fun ByteArray.toLong(big: Boolean): Long {
+    // convert to signed long
+    var result = 0L
     for (i in indices) {
         result = if (big)
-            result shl 8 or (this[i].toInt() and 0xff)
+            result shl 8 or (this[i].toLong() and 0xff)
         else
-            result or (this[i].toInt() and 0xff shl i * 8)
+            result or (this[i].toLong() and 0xff shl i * 8)
     }
     return result
 }
 
-fun ByteArray.crc32(): Int {
+fun ByteArray.crc32(): Long {
     val crc = CRC32()
     crc.update(this)
-    return crc.value.toInt()
+    return crc.value
 }
 
 fun ByteArray.indexOf(bytes: ByteArray): Int {
     for (i in 0..size - bytes.size) {
         var found = true
-        for (j in 0..bytes.size) {
+        for (j in bytes.indices) {
             if (this[i + j] != bytes[j]) {
                 found = false
                 break
@@ -49,7 +53,7 @@ fun InputStream.parsePNGChunk(): Pair<ByteArray, ByteArray> {
     val size = readNBytes(4).toInt(true)
     val ctype = readNBytes(4)
     val body = readNBytes(size)
-    val csum = readNBytes(4).toInt(true)
+    val csum = readNBytes(4).toLong(true)
     if (csum != (ctype + body).crc32())
         throw IllegalStateException("CRC32 mismatch")
     return ctype to body
@@ -57,7 +61,7 @@ fun InputStream.parsePNGChunk(): Pair<ByteArray, ByteArray> {
 
 fun Int.toBytes(size: Int, big: Boolean): ByteArray {
     val result = ByteArray(size)
-    for (i in 0..size) {
+    for (i in 0 until size) {
         result[i] = if (big)
             (this shr (size - i - 1) * 8).toByte()
         else
@@ -151,10 +155,19 @@ class Scanner {
                         return@awaitWith ScanConfidence.NONE
                 }
                 // find end of cropped PNG
-                while (true) {
-                    val (type, _) = stream.parsePNGChunk()
-                    if (type.contentEquals("IEND".toByteArray()))
-                        break
+                try {
+                    while (true) {
+                        val (type, _) = stream.parsePNGChunk()
+                        if (type.contentEquals("IEND".toByteArray()))
+                            break
+                    }
+                } catch (e: IllegalStateException) {
+                    logger.debug("Image $url is corrupt", e)
+                    return@awaitWith ScanConfidence.ERROR
+                } catch (e: IllegalArgumentException) {
+                    // reached end of stream!?
+                    logger.debug("Image $url is corrupt", e)
+                    return@awaitWith ScanConfidence.ERROR
                 }
                 // grab the trailing data
                 val data = stream.readAllBytes()
@@ -167,21 +180,31 @@ class Scanner {
                 // skip first 12 bytes in case they were part of a chunk boundary
                 var idat = data.sliceArray(12 until index - 8)
                 val idatStream = idat.inputStream()
-                while (true) {
-                    val (type, body) = idatStream.parsePNGChunk()
-                    if (type.contentEquals("IDAT".toByteArray()))
-                        idat += body
-                    else if (type.contentEquals("IEND".toByteArray()))
-                        break
-                    else
-                        return@awaitWith ScanConfidence.MEDIUM // invalid chunk; probably reached end of stream? or just corrupt?
+                try {
+                    while (true) {
+                        val (type, body) = idatStream.parsePNGChunk()
+                        if (type.contentEquals("IDAT".toByteArray()))
+                            idat += body
+                        else if (type.contentEquals("IEND".toByteArray()))
+                            break
+                        else {
+                            logger.error("Invalid chunk type $type")
+                            return@awaitWith ScanConfidence.MEDIUM // invalid chunk; probably reached end of stream? or just corrupt?
+                        }
+                    }
+                } catch (e: IllegalStateException) {
+                    logger.error("Illegal state", e)
+                    return@awaitWith ScanConfidence.MEDIUM // invalid chunk; maybe corrupt
+                } catch (e: IllegalArgumentException) {
+                    logger.error("Illegal argument", e)
+                    return@awaitWith ScanConfidence.MEDIUM // reached end of stream; maybe corrupt
                 }
                 // slice off the adler32
                 idat = idat.sliceArray(0 until idat.size - 4)
                 // build bitstream
                 val bits = mutableListOf<Boolean>()
                 for (byte in idat) {
-                    for (bit in 0..7) {
+                    for (bit in 0 until 8) {
                         bits.add((byte.toInt() shr bit and 1) == 1)
                     }
                 }
@@ -192,7 +215,7 @@ class Scanner {
                     val shifted = mutableListOf<Byte>()
                     for (j in i until bits.size - 7 step 8) {
                         var value = 0
-                        for (k in 0..7) {
+                        for (k in 0 until 8) {
                             value = value or (if (bits[j + k]) 1 else 0) shl k
                         }
                         shifted.add(value.toByte())
@@ -231,7 +254,7 @@ class Scanner {
         } catch (e: IOException) {
             return ScanConfidence.ERROR
         } catch (e: Exception) {
-            logger.warn("Unexpected error while scanning $url", e)
+            logger.error("Unexpected error while scanning $url", e)
             return ScanConfidence.ERROR
         }
     }
