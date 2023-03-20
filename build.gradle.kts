@@ -19,6 +19,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:${property("coroutines.version")}")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:${property("coroutines.version")}")
     implementation("ch.qos.logback:logback-classic:${property("logback.version")}")
+    implementation("org.slf4j:slf4j-api:${property("slf4j.version")}")
 }
 
 tasks.test {

@@ -20,6 +20,13 @@ data class ScanState(
     var lastThread: Long = 0,
     var lastMessage: Long = 0,
 ) {
+    init {
+        ScanConfidence.values().forEach {
+            if (it !in tally && (threshold == null || it <= threshold))
+                tally[it] = 0
+        }
+    }
+
     fun tally(confidence: ScanConfidence) {
         tally[confidence] = (tally[confidence] ?: 0) + 1
     }

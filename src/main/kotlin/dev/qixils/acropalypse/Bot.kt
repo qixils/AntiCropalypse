@@ -249,22 +249,22 @@ object Bot {
     }
 
     private suspend fun scanMessage(message: Message, threshold: ScanConfidence = ScanConfidence.CERTAIN): ScanConfidence {
-        logger.debug("Scanning message ${message.jumpUrl} (threshold: ${threshold.name})")
+        logger.atDebug().log { "Scanning message ${message.jumpUrl} (threshold: ${threshold.name})" }
         var confidence = ScanConfidence.ERROR
         for (attachment in message.attachments) {
             if (attachment.isImage) {
-                logger.debug("Scanning image attachment ${attachment.url} in message ${message.jumpUrl}")
-                val scanResult = scanner.scan(attachment.url)
+                logger.atDebug().log { "Scanning image attachment ${attachment.url} in message ${message.jumpUrl}" }
+                val scanResult = scanner.scan(attachment.url, threshold)
                 if (scanResult == ScanConfidence.ERROR)
-                    logger.warn("Unexpected error for attachment ${attachment.url} in message ${message.jumpUrl}; possibly corrupted")
+                    logger.atDebug().log { "Unexpected error for attachment ${attachment.url} in message ${message.jumpUrl}; possibly corrupted" }
                 confidence = max(confidence, scanResult)
                 if (confidence >= threshold)
                     return tally(message, confidence)
             }
         }
         for (match in urlPattern.matcher(message.contentRaw).results()) {
-            logger.debug("Scanning URL ${match.group()} in message ${message.jumpUrl}")
-            confidence = max(confidence, scanner.scan(match.group()))
+            logger.atDebug().log { "Scanning URL ${match.group()} in message ${message.jumpUrl}" }
+            confidence = max(confidence, scanner.scan(match.group(), threshold))
             if (confidence >= threshold)
                 return tally(message, confidence)
         }
@@ -359,13 +359,18 @@ object Bot {
                 }
                 append("The full results, where the first column corresponds to the likelihood of an image being vulnerable, are as follows:\n>>> ")
                 for ((confidence, count) in scanState.tally) {
-                    // TODO?: if (threshold != null && confidence > threshold) continue
+                    if (threshold != null && confidence > threshold) break
                     append(confidence.displayName).append(": ").append(count).append('\n')
                 }
+                if (threshold != null && threshold < ScanConfidence.CERTAIN)
+                    append("_To reduce server load, statistics were not collected for confidence levels above the threshold you selected._")
             }).await()
         } catch (e: Exception) {
             logger.warn("Failed to message user ${scanState.requester} from guild ${guild.name} (${guild.id})", e)
         }
+
+        // remove scan state
+        state.inProgressScans.remove(guild.idLong)
     }
 
     private suspend fun scan(channel: GuildMessageChannel, scanState: ScanState) {
@@ -376,7 +381,7 @@ object Bot {
         scanState.lastChannel = channel.idLong
         while (true) {
             logger.debug("Scanning messages in ${channel.name} (${channel.id}) after ${scanState.lastMessage}")
-            val messages = channel.getHistoryAfter(scanState.lastMessage, 100).await()
+            val messages = retryUntilSuccess(6) { channel.getHistoryAfter(scanState.lastMessage, 100).await() }
             if (messages.isEmpty) break
             // dropWhile is included just in case the first result is the last message we scanned?
             // I don't think this should happen but IDK

@@ -138,9 +138,10 @@ class Scanner {
      * Checks if the image at the given URL is vulnerable to the Acropalypse exploit (CVE-2023-21036).
      *
      * @param url the URL of the image to scan
+     * @param threshold the maximum confidence level to return
      * @return the confidence level of the scan
      */
-    suspend fun scan(url: String): ScanConfidence {
+    suspend fun scan(url: String, threshold: ScanConfidence = ScanConfidence.CERTAIN): ScanConfidence {
         if (!url.contains(extension, true))
             return ScanConfidence.NONE
         // download image
@@ -177,12 +178,16 @@ class Scanner {
                 val trailing = stream.readAllBytes()
                 if (trailing.isEmpty())
                     return@awaitWith ScanConfidence.NONE
+                else if (threshold == ScanConfidence.LOW)
+                    return@awaitWith ScanConfidence.LOW
                 // skip first 12 bytes in case they were part of a chunk boundary
                 val search = trailing.sliceArray(12 until trailing.size)
                 // find the start of the next IDAT chunk
                 val nextIDAT = search.indexOf(IDAT)
                 if (nextIDAT == -1)
                     return@awaitWith ScanConfidence.LOW
+                else if (threshold == ScanConfidence.MEDIUM)
+                    return@awaitWith ScanConfidence.MEDIUM
                 var idat = search.sliceArray(0 until nextIDAT - 8)
                 val trailingStream = trailing.sliceArray(nextIDAT - 4 + 12 until trailing.size).inputStream()
                 try {
@@ -204,6 +209,8 @@ class Scanner {
                     logger.error("Illegal argument", e)
                     return@awaitWith ScanConfidence.MEDIUM // reached end of stream; maybe corrupt
                 }
+                if (threshold == ScanConfidence.HIGH)
+                    return@awaitWith ScanConfidence.HIGH
                 // slice off the adler32
                 idat = idat.sliceArray(0 until idat.size - 4)
                 // build bitstream
