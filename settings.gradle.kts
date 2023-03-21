@@ -1,3 +1,2 @@
-
-rootProject.name = "anti-acropalypse"
-
+rootProject.name = "anticropalypse"
+include(":bot")
