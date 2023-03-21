@@ -31,12 +31,9 @@ import net.dv8tion.jda.api.requests.GatewayIntent
 import net.dv8tion.jda.api.utils.messages.MessageRequest
 import net.dv8tion.jda.internal.utils.PermissionUtil
 import java.io.File
-import java.time.Instant
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.toJavaDuration
 
 @OptIn(ExperimentalSerializationApi::class)
 object Bot {
@@ -73,7 +70,6 @@ object Bot {
         // schedule state saving
         scheduler.scheduleAtFixedRate({
             try {
-                updateDisabledScanMap()
                 saveState()
             } catch (e: Exception) {
                 logger.atError().setCause(e).log("Failed to save state")
@@ -203,13 +199,6 @@ object Bot {
 
     private fun saveState() {
         saveState(state)
-    }
-
-    private fun updateDisabledScanMap() {
-        val disabledScanMap = state.disabledScans
-        val now = Instant.now()
-        val duration = 5.minutes.toJavaDuration()
-        disabledScanMap.values.removeIf { (Instant.ofEpochSecond(it) + duration) < now }
     }
 
     private suspend fun scanMessage(message: Message, threshold: ScanConfidence = ScanConfidence.CERTAIN): ScanConfidence {
@@ -356,6 +345,7 @@ object Bot {
             }
             for (message in messages.retrievedHistory.sortedBy { it.idLong }) {
                 // TODO: async message scanning? (needs graceful shutdown)
+                // TODO: stop searching when we hit a message older than discord's implementation of PNG stripping?
                 val result = scanMessage(message, threshold ?: ScanConfidence.CERTAIN)
                 if (threshold != null && result >= threshold) {
                     // TODO: archive message

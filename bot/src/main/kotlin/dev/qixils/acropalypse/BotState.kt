@@ -7,7 +7,6 @@ import net.dv8tion.jda.api.Permission
 data class BotState(
     var inProgressScans: MutableMap<Long, ScanState> = mutableMapOf(), // map of guild ID to scan state
     var deletionThreshold: MutableMap<Long, ScanConfidence> = mutableMapOf(), // map of guild ID to deletion threshold
-    var disabledScans: MutableMap<Long, Long> = mutableMapOf(), // map of user ID to instant of disabling
 )
 
 @Serializable
