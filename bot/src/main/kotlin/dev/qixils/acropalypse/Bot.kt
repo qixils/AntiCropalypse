@@ -160,7 +160,10 @@ object Bot {
             state.inProgressScans[event.guild!!.idLong] = ScanState(event.user.idLong, null)
             scan(event.guild!!)
         }
-        // TODO: support cancelling
+        jda.onButton("scan:cancel") { event ->
+            state.inProgressScans.remove(event.guild!!.idLong)
+            event.editMessage_("The scan has been cancelled.", replace = true).queue()
+        }
         // configure
         jda.onCommand("confidence") { event ->
             val level = ScanConfidence.valueOf(event.getOption("level")!!.asString)
@@ -337,6 +340,10 @@ object Bot {
         logger.atDebug().log { "Scanning channel ${channel.name} (${channel.id})" }
         val threshold = scanState.threshold
         while (true) {
+            if (channel.guild.idLong !in state.inProgressScans) {
+                logger.atDebug().log { "Aborting scan of ${channel.name} (${channel.id}) due to cancellation for guild ${channel.guild.name} (${channel.guild.id})" }
+                return
+            }
             logger.atDebug().log { "Scanning messages in ${channel.name} (${channel.id}) after ${channelState.lastMessage}" }
             val messages = retryUntilSuccess(7) { channel.getHistoryAfter(channelState.lastMessage, 100).await() }
             if (messages.isEmpty) {
