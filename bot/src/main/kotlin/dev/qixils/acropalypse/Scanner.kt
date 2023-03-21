@@ -167,11 +167,11 @@ class Scanner {
                             break
                     }
                 } catch (e: IllegalStateException) {
-                    logger.debug("Image $url is corrupt", e)
+                    logger.atDebug().setCause(e).log { "Image $url is corrupt" }
                     return@awaitWith ScanConfidence.ERROR
                 } catch (e: IllegalArgumentException) {
                     // reached end of stream!?
-                    logger.debug("Image $url is corrupt", e)
+                    logger.atDebug().setCause(e).log { "Image $url is corrupt" }
                     return@awaitWith ScanConfidence.ERROR
                 }
                 // grab the trailing data
@@ -198,15 +198,15 @@ class Scanner {
                         else if (type.contentEquals(IEND))
                             break
                         else {
-                            logger.error("Invalid chunk type $type")
+                            logger.atError().log { "Invalid chunk type $type" }
                             return@awaitWith ScanConfidence.MEDIUM // invalid chunk; probably reached end of stream? or just corrupt?
                         }
                     }
                 } catch (e: IllegalStateException) {
-                    logger.error("Illegal state", e)
+                    logger.atError().setCause(e).log("Illegal state")
                     return@awaitWith ScanConfidence.MEDIUM // invalid chunk; maybe corrupt
                 } catch (e: IllegalArgumentException) {
-                    logger.error("Illegal argument", e)
+                    logger.atError().setCause(e).log("Illegal argument")
                     return@awaitWith ScanConfidence.MEDIUM // reached end of stream; maybe corrupt
                 }
                 if (threshold == ScanConfidence.HIGH)
@@ -236,11 +236,11 @@ class Scanner {
                 }
                 // bit wrangling sanity checks
                 if (!byteOffsets[0].contentEquals(idat)) {
-                    logger.error("byteOffsets[0] != idat")
+                    logger.atError().log("byteOffsets[0] != idat")
                     return@awaitWith ScanConfidence.HIGH
                 }
                 if (byteOffsets[1].contentEquals(idat)) {
-                    logger.error("byteOffsets[1] == idat")
+                    logger.atError().log("byteOffsets[1] == idat")
                     return@awaitWith ScanConfidence.HIGH
                 }
                 // prefix the stream with 32k of "X" so backrefs can work
@@ -273,7 +273,7 @@ class Scanner {
         } catch (e: IOException) {
             return ScanConfidence.ERROR
         } catch (e: Exception) {
-            logger.error("Unexpected error while scanning $url", e)
+            logger.atError().setCause(e).log { "Unexpected error while scanning $url" }
             return ScanConfidence.ERROR
         }
     }

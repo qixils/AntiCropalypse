@@ -1,7 +1,6 @@
 package dev.qixils.acropalypse
 
 import dev.minn.jda.ktx.coroutines.await
-import dev.minn.jda.ktx.events.listener
 import dev.minn.jda.ktx.events.onButton
 import dev.minn.jda.ktx.events.onCommand
 import dev.minn.jda.ktx.interactions.commands.*
@@ -10,6 +9,8 @@ import dev.minn.jda.ktx.jdabuilder.intents
 import dev.minn.jda.ktx.jdabuilder.light
 import dev.minn.jda.ktx.messages.*
 import dev.minn.jda.ktx.util.SLF4J
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.cbor.Cbor
@@ -22,9 +23,8 @@ import net.dv8tion.jda.api.entities.Guild
 import net.dv8tion.jda.api.entities.Message
 import net.dv8tion.jda.api.entities.channel.attribute.IPermissionContainer
 import net.dv8tion.jda.api.entities.channel.attribute.IThreadContainer
-import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel
+import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel
 import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel
-import net.dv8tion.jda.api.events.message.MessageReceivedEvent
 import net.dv8tion.jda.api.exceptions.ErrorResponseException
 import net.dv8tion.jda.api.requests.ErrorResponse
 import net.dv8tion.jda.api.requests.GatewayIntent
@@ -64,7 +64,7 @@ object Bot {
     val state: BotState = if (stateFile.exists()) cbor.decodeFromByteArray(stateFile.readBytes()) else BotState()
 
     init {
-        logger.info("Initializing")
+        logger.atInfo().log("Initializing")
         // load token
         val token = System.getenv("BOT_TOKEN")
         if (token.isNullOrBlank()) {
@@ -76,7 +76,7 @@ object Bot {
                 updateDisabledScanMap()
                 saveState()
             } catch (e: Exception) {
-                logger.error("Failed to save state", e)
+                logger.atError().setCause(e).log("Failed to save state")
             }
         }, 1, 1, TimeUnit.MINUTES)
         // build JDA
@@ -175,58 +175,22 @@ object Bot {
                 append("> ").append(level.description)
             }).setEphemeral(true).queue()
         }
-
-        // listen for new messages
-        jda.listener<MessageReceivedEvent> { event ->
-            if (!event.isFromGuild) return@listener
-            val channel = event.guildChannel
-            val container = when (channel) {
-                is IPermissionContainer -> channel
-                is ThreadChannel -> channel.parentChannel
-                else -> return@listener
-            }
-            if (!PermissionUtil.checkPermission(container, event.guild.selfMember, Permission.MESSAGE_MANAGE)) return@listener
-            if (event.author.idLong in state.disabledScans) return@listener
-            val confidence = state.deletionThreshold[event.guild.idLong] ?: ScanConfidence.DEFAULT
-            val result = scanMessage(event.message, confidence)
-            logger.debug("Active scan result: $result (threshold: $confidence) for message ${event.message.idLong} in #${event.channel.name} (${event.channel.idLong})")
-            if (result >= confidence) {
-                if (false) { // TODO: temp
-                    event.message.delete().queue()
-                    event.channel.sendMessage(MessageCreate {
-                        content = buildString {
-                            append("Hey ").append(event.author.asMention).append(", ")
-                            append("I've unfortunately had to delete your message as it seems to be vulnerable to an ")
-                            append("exploit which could've allowed bad actors to view your original, unedited screenshot. ")
-                            append("If you believe your original screenshot is innocuous or that this was a mistake, ")
-                            append("you can click the button below to temporarily disable my scanning. Otherwise, you can ")
-                            append("click OK or wait 60 seconds to delete this message.")
-                        }
-                        components += row(
-                            primary("active_scan:ok", "OK"),
-                            danger("active_scan:disable", "Disable")
-                        )
-                    }).delay(1.minutes.toJavaDuration()).flatMap(Message::delete).queue()
-                }
-                logger.info("Deleted message in #${event.channel.name} in ${event.guild.name}: ${event.message.jumpUrl}")
-            }
-        }
     }
 
-    private suspend fun start() {
+    private suspend fun start() = coroutineScope {
         // wait for load
-        logger.info("Waiting for ready")
+        logger.atInfo().log("Waiting for ready")
         jda.awaitReady()
-        logger.info("Ready")
+        logger.atInfo().log("Ready")
         val guildIdIterator = state.inProgressScans.keys.iterator()
         while (guildIdIterator.hasNext()) {
             val guildId = guildIdIterator.next()
             val guild = jda.getGuildById(guildId)
             if (guild == null) {
-                logger.warn("Guild $guildId no longer exists, skipping scan")
+                logger.atWarn().log { "Guild $guildId no longer exists, skipping scan" }
             } else {
-                logger.info("Resuming scan for ${guild.name} ($guildId)")
-                scan(guild)
+                logger.atInfo().log { "Resuming scan for ${guild.name} ($guildId)" }
+                launch { scan(guild) }
             }
             guildIdIterator.remove()
         }
@@ -273,59 +237,23 @@ object Bot {
 
     private fun tally(message: Message, confidence: ScanConfidence): ScanConfidence {
         if (confidence > ScanConfidence.NONE)
-            logger.info("Found image with confidence ${confidence.name} in message ${message.jumpUrl}")
+            logger.atInfo().log { "Found image with confidence ${confidence.name} in message ${message.jumpUrl}" }
         state.inProgressScans[message.guild.idLong]?.tally(confidence)
         return confidence
     }
 
     private suspend fun scan(guild: Guild) {
-        logger.info("Scanning guild ${guild.name} (${guild.id})")
+        logger.atInfo().log { "Scanning guild ${guild.name} (${guild.id})" }
         val scanState = state.inProgressScans[guild.idLong] ?: run {
-            logger.error("No scan state found for guild ${guild.name} (${guild.id})")
+            logger.atError().log { "No scan state found for guild ${guild.name} (${guild.id})" }
             return
         }
         val threshold = scanState.threshold
-        for (channel in guild.channels.sortedBy { it.idLong }.dropWhile { it.idLong < scanState.lastChannel }) {
-            logger.debug("Possibly scanning channel ${channel.name} (${channel.id})")
-            if (channel.idLong != scanState.lastChannel) {
-                scanState.lastChannel = channel.idLong
-                scanState.lastMessage = 0
-                scanState.lastThread = 0
-            }
-            // ensure we have permission to read messages, manage messages, and view message history
-            if (channel !is IPermissionContainer)
-                continue
-            val requiredPermissions = this.requiredPermissions.toMutableSet()
-            if (threshold != null) requiredPermissions += Permission.MESSAGE_MANAGE
-            val missingPermissions = mutableSetOf<Permission>()
-            for (permission in requiredPermissions) {
-                if (!PermissionUtil.checkPermission(channel, guild.selfMember, permission))
-                    missingPermissions += permission
-            }
-            if (missingPermissions.isNotEmpty()) {
-                scanState.skippedChannels[channel.idLong] = missingPermissions
-                continue
-            }
-            // scan channel and threads
-            logger.debug("Scanning channel ${channel.name} (${channel.id})")
-            if (channel is GuildMessageChannel && scanState.lastThread == 0L)
-                scan(channel, scanState)
-            if (channel is IThreadContainer) {
-                val threads = channel.threadChannels.toMutableList()
-                threads += channel.retrieveArchivedPublicThreadChannels().await()
-                try {
-                    threads += channel.retrieveArchivedPrivateJoinedThreadChannels().await() // TODO: search through more private threads
-                } catch (e: ErrorResponseException) {
-                    if (e.errorResponse != ErrorResponse.INVALID_CHANNEL_TYPE)
-                        logger.error("Unexpected error while retrieving private threads", e)
-                }
-                for (thread in threads.sortedBy { it.idLong }.dropWhile { it.idLong < scanState.lastThread }) {
-                    if (thread.idLong != scanState.lastThread) {
-                        scanState.lastThread = thread.idLong
-                        scanState.lastMessage = 0
-                    }
-                    scan(thread, scanState)
-                }
+
+        // scan channels
+        coroutineScope {
+            for (channel in guild.channels) {
+                launch { tryScan(channel, scanState) }
             }
         }
 
@@ -334,9 +262,11 @@ object Bot {
             val requester = jda.retrieveUserById(scanState.requester).await()
             requester.openPrivateChannel().await().send(buildString {
                 append("I have finished scanning ").append(guild.name).append(" for vulnerable screenshots. ")
-                if (scanState.skippedChannels.isNotEmpty()) {
+                val skippedChannels = scanState.channels.filter { it.value.missing.isNotEmpty() }
+                if (skippedChannels.isNotEmpty()) {
                     append("During my scan, I had to skip the following channels (and their threads) for lack of permissions:\n")
-                    for ((channelId, missingPermissions) in scanState.skippedChannels) {
+                    for ((channelId, channelState) in skippedChannels) {
+                        val missingPermissions = channelState.missing
                         val channel = guild.getTextChannelById(channelId)
                         append(" - ")
                         if (channel != null)
@@ -366,32 +296,73 @@ object Bot {
                     append("_To reduce server load, statistics were not collected for confidence levels above the threshold you selected._")
             }).await()
         } catch (e: Exception) {
-            logger.warn("Failed to message user ${scanState.requester} from guild ${guild.name} (${guild.id})", e)
+            logger.atWarn().setCause(e).log { "Failed to message user ${scanState.requester} from guild ${guild.name} (${guild.id})" }
         }
 
         // remove scan state
         state.inProgressScans.remove(guild.idLong)
     }
 
-    private suspend fun scan(channel: GuildMessageChannel, scanState: ScanState) {
-        logger.debug("Scanning channel ${channel.name} (${channel.id})")
+    private suspend fun tryScan(channel: GuildChannel, scanState: ScanState) = coroutineScope {
+        logger.atDebug().log { "Possibly scanning channel ${channel.name} (${channel.id})" }
         val threshold = scanState.threshold
-        // skip channels where we don't have permission to read messages, manage messages, and view message history
-        if (channel.idLong != scanState.lastChannel) scanState.lastMessage = 0
-        scanState.lastChannel = channel.idLong
+        val channelState = scanState.channels.getOrPut(channel.idLong) { ParentChannelScanState() }
+        // ensure we have permission to read messages, manage messages, and view message history
+        if (channelState.missing.isNotEmpty())
+            return@coroutineScope
+        if (channel !is IPermissionContainer)
+            return@coroutineScope
+        val requiredPermissions = requiredPermissions.toMutableSet()
+        if (threshold != null) requiredPermissions += Permission.MESSAGE_MANAGE
+        val missingPermissions = mutableSetOf<Permission>()
+        for (permission in requiredPermissions) {
+            if (!PermissionUtil.checkPermission(channel, channel.guild.selfMember, permission))
+                missingPermissions += permission
+        }
+        if (missingPermissions.isNotEmpty()) {
+            channelState.missing += missingPermissions
+            return@coroutineScope
+        }
+        // scan channel and threads
+        logger.atDebug().log { "Scanning channel ${channel.name} (${channel.id})" }
+        if (channel is GuildMessageChannel)
+            launch { scan(channel, scanState, channelState)}
+        if (channel is IThreadContainer) {
+            val threads = channel.threadChannels.toMutableList()
+            threads += channel.retrieveArchivedPublicThreadChannels().await()
+            try {
+                threads += channel.retrieveArchivedPrivateJoinedThreadChannels().await() // TODO: search through more private threads
+            } catch (e: ErrorResponseException) {
+                if (e.errorResponse != ErrorResponse.INVALID_CHANNEL_TYPE)
+                    logger.atError().setCause(e).log("Unexpected error while retrieving private threads")
+            }
+            for (thread in threads) {
+                val threadScanState = channelState.threads.getOrPut(thread.idLong) { ThreadScanState() }
+                launch { scan(thread, scanState, threadScanState) }
+            }
+        }
+    }
+
+    private suspend fun scan(channel: GuildMessageChannel, scanState: ScanState, channelState: ChannelScanState) {
+        if (channelState.lastMessage == Long.MAX_VALUE) return
+        logger.atDebug().log { "Scanning channel ${channel.name} (${channel.id})" }
+        val threshold = scanState.threshold
         while (true) {
-            logger.debug("Scanning messages in ${channel.name} (${channel.id}) after ${scanState.lastMessage}")
-            val messages = retryUntilSuccess(6) { channel.getHistoryAfter(scanState.lastMessage, 100).await() }
-            if (messages.isEmpty) break
-            // dropWhile is included just in case the first result is the last message we scanned?
-            // I don't think this should happen but IDK
-            for (message in messages.retrievedHistory.sortedBy { it.idLong }.dropWhile { it.idLong <= scanState.lastMessage }) {
+            logger.atDebug().log { "Scanning messages in ${channel.name} (${channel.id}) after ${channelState.lastMessage}" }
+            val messages = retryUntilSuccess(7) { channel.getHistoryAfter(channelState.lastMessage, 100).await() }
+            if (messages.isEmpty) {
+                channelState.lastMessage = Long.MAX_VALUE
+                break
+            }
+            for (message in messages.retrievedHistory.sortedBy { it.idLong }) {
+                // TODO: async message scanning? (needs graceful shutdown)
                 val result = scanMessage(message, threshold ?: ScanConfidence.CERTAIN)
                 if (threshold != null && result >= threshold) {
-                    // TODO message.delete().queue()
-                    logger.debug("Deleted message in #${channel.name} in ${channel.guild.name}: ${message.jumpUrl}")
+                    // TODO: archive message
+                    message.delete().queue()
+                    logger.atDebug().log { "Deleted message in #${channel.name} in ${channel.guild.name}: ${message.jumpUrl}" }
                 }
-                scanState.lastMessage = message.idLong
+                channelState.lastMessage = message.idLong
             }
         }
     }

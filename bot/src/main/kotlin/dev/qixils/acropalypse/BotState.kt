@@ -14,11 +14,8 @@ data class BotState(
 data class ScanState(
     val requester: Long,
     val threshold: ScanConfidence? = null,
-    val skippedChannels: MutableMap<Long, Set<Permission>> = mutableMapOf(), // map of channel ID to missing permissions
+    val channels: MutableMap<Long, ParentChannelScanState> = mutableMapOf(),
     val tally: MutableMap<ScanConfidence, Int> = mutableMapOf(),
-    var lastChannel: Long = 0,
-    var lastThread: Long = 0,
-    var lastMessage: Long = 0,
 ) {
     init {
         ScanConfidence.values().forEach {
@@ -31,3 +28,19 @@ data class ScanState(
         tally[confidence] = (tally[confidence] ?: 0) + 1
     }
 }
+
+interface ChannelScanState {
+    var lastMessage: Long
+}
+
+@Serializable
+data class ParentChannelScanState(
+    val missing: MutableSet<Permission> = mutableSetOf(),
+    val threads: MutableMap<Long, ThreadScanState> = mutableMapOf(),
+    override var lastMessage: Long = 0,
+) : ChannelScanState
+
+@Serializable
+data class ThreadScanState(
+    override var lastMessage: Long = 0,
+) : ChannelScanState
