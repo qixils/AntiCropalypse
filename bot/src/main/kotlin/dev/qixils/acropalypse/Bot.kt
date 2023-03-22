@@ -1,8 +1,17 @@
 package dev.qixils.acropalypse
 
+import com.amazonaws.HttpMethod
+import com.amazonaws.SdkClientException
+import com.amazonaws.auth.AWSStaticCredentialsProvider
+import com.amazonaws.auth.BasicAWSCredentials
+import com.amazonaws.client.builder.AwsClientBuilder
+import com.amazonaws.services.s3.AmazonS3
+import com.amazonaws.services.s3.AmazonS3ClientBuilder
+import com.amazonaws.services.s3.model.CreateBucketRequest
 import dev.minn.jda.ktx.coroutines.await
 import dev.minn.jda.ktx.events.onButton
 import dev.minn.jda.ktx.events.onCommand
+import dev.minn.jda.ktx.events.onStringSelect
 import dev.minn.jda.ktx.interactions.commands.*
 import dev.minn.jda.ktx.interactions.components.*
 import dev.minn.jda.ktx.jdabuilder.intents
@@ -24,11 +33,15 @@ import net.dv8tion.jda.api.entities.channel.attribute.IThreadContainer
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel
 import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel
 import net.dv8tion.jda.api.exceptions.ErrorResponseException
+import net.dv8tion.jda.api.interactions.callbacks.IReplyCallback
 import net.dv8tion.jda.api.requests.ErrorResponse
 import net.dv8tion.jda.api.requests.GatewayIntent
 import net.dv8tion.jda.api.utils.messages.MessageRequest
 import net.dv8tion.jda.internal.utils.PermissionUtil
 import java.io.File
+import java.time.Instant
+import java.time.temporal.ChronoUnit
+import java.util.Date
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
@@ -54,6 +67,8 @@ object Bot {
     private val jda: JDA
     private val logger by SLF4J
     private val scanJob = SupervisorJob()
+    private val s3: AmazonS3?
+    private val bucket: String?
     private var stopping = false
 
     /**
@@ -77,6 +92,23 @@ object Bot {
                 logger.atError().setCause(e).log("Failed to save state")
             }
         }, 1, 1, TimeUnit.MINUTES)
+        // load S3 client
+        val endpoint = System.getenv("S3_ENDPOINT")
+        val region = System.getenv("S3_REGION")
+        val accessKeyId = System.getenv("S3_ACCESS_KEY_ID")
+        val secretAccessKey = System.getenv("S3_SECRET_ACCESS_KEY")
+        bucket = System.getenv("S3_BUCKET")
+        if (endpoint == null || region == null || accessKeyId == null || secretAccessKey == null || bucket == null) {
+            s3 = null
+        } else {
+            s3 = AmazonS3ClientBuilder.standard()
+                .withEndpointConfiguration(AwsClientBuilder.EndpointConfiguration(endpoint, region))
+                .withCredentials(AWSStaticCredentialsProvider(BasicAWSCredentials(accessKeyId, secretAccessKey)))
+                .build()!!
+            if (!s3.doesBucketExistV2(bucket)) {
+                s3.createBucket(CreateBucketRequest(bucket, region))
+            }
+        }
         // build JDA
         jda = light(token, enableCoroutines=true) {
             intents += GatewayIntent.MESSAGE_CONTENT // necessary to scan attachments
@@ -100,6 +132,10 @@ object Bot {
                     choice(ScanConfidence.HIGH.displayName!!, ScanConfidence.HIGH.name)
                     choice(ScanConfidence.CERTAIN.displayName!!, ScanConfidence.CERTAIN.name)
                 }
+            }
+            slash("opt-out", "Opt out of having your images scanned or deleted")
+            if (s3 != null) {
+                slash("download", "Fetches a download link for all of your vulnerable images that were deleted")
             }
         }.queue()
         // purge
@@ -171,10 +207,74 @@ object Bot {
             val level = ScanConfidence.valueOf(event.getOption("level")!!.asString)
             state.deletionThreshold[event.guild!!.idLong] = level
             event.reply_(buildString {
-                append("Okay, I'll delete images with **")
-                append(level.displayName).append("** or higher confidence.\n")
+                append("The minimum confidence for deleting images has been set to **")
+                append(level.displayName).append("** or higher.\n")
                 append("> ").append(level.description)
             }).setEphemeral(true).queue()
+        }
+        // opt-out
+        jda.onCommand("opt-out") { event ->
+            val ephemeral = event.isFromGuild
+            if (event.user.idLong !in state.optOut) {
+                state.optOut.add(event.user.idLong)
+                event.reply_("Your images will no longer be scanned for the Acropalypse vulnerability.").setEphemeral(ephemeral).queue()
+            } else {
+                event.reply(MessageCreate {
+                    content = buildString {
+                        append("You have already opted out of having your images scanned for the Acropalypse vulnerability.")
+                        append("Would you like to opt back in?")
+                    }
+                    components += row(
+                        primary("opt-out:yes", "Yes"),
+                        secondary("opt-out:no", "No")
+                    )
+                }).queue()
+            }
+        }
+        jda.onButton("opt-out:no") { event ->
+            event.editMessage_("You remain opted-out from image scanning.", replace = true).queue()
+        }
+        jda.onButton("opt-out:yes") { event ->
+            state.optOut.remove(event.user.idLong)
+            event.editMessage_("You have been opted back in to image scanning.", replace = true).queue()
+        }
+        // download
+        if (s3 != null) {
+            jda.onCommand("download") { event ->
+                if (!event.isFromGuild) {
+                    // find all guilds with data available for this user
+                    val objects = s3.listObjectsV2(bucket, "archive/")
+                    val guilds = objects.objectSummaries
+                        .map { it.key.split('/')[1] }
+                        .distinct()
+                    if (guilds.isEmpty()) {
+                        event.reply("You do not currently have any archived images.").queue()
+                    } else {
+                        event.reply(MessageCreate {
+                            content = "From which guild would you like to download your archived images?"
+                            components += row(StringSelectMenu("download:guild") {
+                                guilds.forEach { guildId ->
+                                    val guild = jda.getGuildById(guildId)
+                                    if (guild != null) {
+                                        option(guild.name, guildId)
+                                    }
+                                }
+                            })
+                        }).queue()
+                    }
+                } else {
+                    sendDownloadLink(event, event.guild!!.idLong)
+                }
+            }
+            jda.onStringSelect("download:guild") { event ->
+                val guildId = event.values.first().toLong()
+                val guild = jda.getGuildById(guildId)
+                if (guild == null) {
+                    event.reply("That guild no longer exists.").queue()
+                } else {
+                    sendDownloadLink(event, guildId)
+                }
+            }
         }
     }
 
@@ -214,6 +314,30 @@ object Bot {
         saveState()
         logger.atInfo().log("Stopped")
         exitProcess(0)
+    }
+
+    private fun sendDownloadLink(interaction: IReplyCallback, guildId: Long) {
+        if (s3 == null) {
+            logger.atWarn().setCause(Exception()).log("#sendDownloadLink called when s3 is null?")
+            return
+        }
+        val key = "archive/${guildId}/${interaction.user.idLong}.zip"
+        val expiration: Date = Date.from(Instant.now().plus(1, ChronoUnit.HOURS))
+        val url = try {
+            s3.generatePresignedUrl(bucket, key, expiration, HttpMethod.GET)
+        } catch (e: SdkClientException) {
+            null
+        }
+        if (url == null) {
+            interaction.reply("Could not find any archived images for you in ${jda.getGuildById(guildId)!!.name}.")
+                .setEphemeral(interaction.isFromGuild).queue()
+        } else {
+            interaction.reply_(buildString {
+                append("Your images from ").append(jda.getGuildById(guildId)!!.name)
+                append(" will be available for download at the following link for one hour:\n<")
+                append(url).append('>')
+            }).setEphemeral(interaction.isFromGuild).queue()
+        }
     }
 
     @Synchronized
