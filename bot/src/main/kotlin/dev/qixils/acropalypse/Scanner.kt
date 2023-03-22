@@ -115,7 +115,7 @@ enum class ScanConfidence(
         /**
          * The default confidence level to use when deleting images.
          */
-        val DEFAULT = MEDIUM
+        val DEFAULT = HIGH
     }
 }
 
@@ -203,10 +203,10 @@ class Scanner {
                         }
                     }
                 } catch (e: IllegalStateException) {
-                    logger.atError().setCause(e).log("Illegal state")
+                    logger.atWarn().setCause(e).log("Illegal state ($url)")
                     return@awaitWith ScanConfidence.MEDIUM // invalid chunk; maybe corrupt
                 } catch (e: IllegalArgumentException) {
-                    logger.atError().setCause(e).log("Illegal argument")
+                    logger.atWarn().setCause(e).log("Illegal argument ($url)")
                     return@awaitWith ScanConfidence.MEDIUM // reached end of stream; maybe corrupt
                 }
                 if (threshold == ScanConfidence.HIGH)

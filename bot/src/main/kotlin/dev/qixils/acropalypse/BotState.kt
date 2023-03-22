@@ -34,7 +34,7 @@ interface ChannelScanState {
 
 @Serializable
 data class ParentChannelScanState(
-    val missing: MutableSet<Permission> = mutableSetOf(),
+    val missingPermissions: MutableSet<Permission> = mutableSetOf(),
     val threads: MutableMap<Long, ThreadScanState> = mutableMapOf(),
     override var lastMessage: Long = 0,
 ) : ChannelScanState
