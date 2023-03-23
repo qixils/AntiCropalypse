@@ -4,19 +4,26 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlin.math.pow
 
-suspend fun <T : Any> retryUntilSuccess(limit: Int = 10, block: suspend () -> T): T {
-    return retryUntilSuccess(null, 0, limit, block)
+suspend inline fun <T : Any?> retryUntilSuccess(limit: Int = 10, block: () -> T): T {
+    return retryUntilSuccess<T, Exception>(limit, block = block)
 }
 
-private suspend fun <T : Any> retryUntilSuccess(exception: Exception?, count: Int, limit: Int, block: suspend () -> T): T {
-    if (count >= limit)
-        throw RuntimeException("Retry limit exceeded", exception)
-    return try {
-        block()
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        delay(2f.pow(count).toLong() * 1000L)
-        retryUntilSuccess(e, count + 1, limit, block)
+suspend inline fun <T : Any?, reified E : Exception> retryUntilSuccess(limit: Int = 10, exceptionHandler: (E) -> Unit = {}, block: () -> T): T {
+    check(limit > 0)
+    var count = 0
+    var exception: Exception? = null
+    while (limit <= 0 || count < limit) {
+        try {
+            return block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e is E)
+                exceptionHandler(e)
+            exception = e
+            count++
+            delay(2f.pow(count).toLong() * 1000L)
+        }
     }
+    throw RuntimeException("Retry limit exceeded", exception)
 }
