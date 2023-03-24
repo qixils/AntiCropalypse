@@ -7,6 +7,22 @@ Active scanning has been omitted as Discord started stripping excess image data 
 Instead, this bot's purpose is to search for and delete old vulnerable images.
 The bot can optionally archive deleted images (with the excess data stripped!) to an S3 bucket.
 
+## Usage
+
+<!-- TODO: colspan? -->
+
+| Command               | Description                                                                       |
+|-----------------------|-----------------------------------------------------------------------------------|
+| **User Commands**     |
+| `/download`           | Fetches a download link for all of your vulnerable images that were deleted       |
+| `/forget-me`          | Removes your archives of deleted images                                           |
+| `/opt-out archiving`  | Opts-out of having your deleted screenshots backed up for you to download         |
+| `/opt-out everything` | Opts-out of having your vulnerable screenshots scanned, deleted, or archived      |
+| **Admin Commands**    |
+| `/count`              | Searches for and counts potentially vulnerable images                             |
+| `/confidence`         | Configures how confident the bot should be before deleting an image               |
+| `/purge`              | Searches for and deletes vulnerable images according to the configured confidence |
+
 ## Self-hosting
 
 To use, set the required environment variables (see below) and run `./gradlew :bot:run`.

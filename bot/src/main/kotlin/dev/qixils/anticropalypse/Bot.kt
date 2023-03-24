@@ -172,7 +172,7 @@ object Bot {
             }
             if (s3 != null) {
                 slash("download", "Fetches a download link for all of your vulnerable images that were deleted")
-                slash("forget-me", "Removes your archives of deleted screenshots")
+                slash("forget-me", "Removes your archives of deleted images")
             }
         }.queue()
         // purge
