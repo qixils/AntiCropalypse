@@ -1,4 +1,4 @@
-package dev.qixils.acropalypse
+package dev.qixils.anticropalypse
 
 import com.amazonaws.HttpMethod
 import com.amazonaws.SdkClientException
@@ -24,6 +24,7 @@ import dev.minn.jda.ktx.messages.*
 import dev.minn.jda.ktx.util.SLF4J
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.decodeFromByteArray
@@ -46,12 +47,15 @@ import net.dv8tion.jda.api.requests.GatewayIntent
 import net.dv8tion.jda.api.utils.messages.MessageRequest
 import net.dv8tion.jda.internal.utils.PermissionUtil
 import java.net.URI
+import java.net.URL
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
-import java.util.ArrayDeque
 import java.util.Date
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -71,7 +75,9 @@ object Bot {
 
     private val urlPattern = Pattern.compile("https?://\\S+\\.[Pp][Nn][Gg]")
     private val requiredPermissions = setOf(Permission.VIEW_CHANNEL, Permission.MESSAGE_HISTORY)
-    private val stateFile = Path("anticropalypse", "state.cbor").apply { Files.createDirectories(parent) }
+    private val rootDir = Path("data")
+    private val archiveDir = rootDir.resolve("archive").apply { Files.createDirectories(this) }
+    private val stateFile = rootDir.resolve("state.cbor")
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private val cbor = Cbor {  }
     private val scanner = Scanner()
@@ -81,11 +87,10 @@ object Bot {
     private val s3: AmazonS3?
     private val bucket: String
     private var stopping = false
-    private var lateStopping = false
-    private val archiveQueue: ArrayDeque<Message>?
-    private val archiveThread: Thread?
     private val shutdownThread = Thread(::shutdown, "Shutdown")
     private val archiveLocks = mutableMapOf<String, Mutex>()
+    private val archiveMetaLock = Mutex()
+    private val cutoff = OffsetDateTime.of(2023, 2, 1, 0, 0, 0, 0, ZoneOffset.UTC)
 
     /**
      * The state of the bot.
@@ -177,12 +182,22 @@ object Bot {
                 return@onCommand
             }
             val confidence = state.deletionThreshold[event.guild!!.idLong] ?: ScanConfidence.DEFAULT
+            val previousScan = state.finishedScans[event.guild!!.idLong]
             event.reply(MessageCreate {
-                content = buildString {
+                content = if (previousScan == null || previousScan > confidence) buildString {
                     append("Per this server's configured `/confidence` level, I will delete images with **")
                     append(confidence.displayName).append("** or higher confidence.\n")
                     append("> ").append(confidence.description)
                     append("\nIs this okay?")
+                } else buildString {
+                    append("This guild has already had vulnerable images scanned for and deleted with **")
+                    append(previousScan.displayName).append("** or higher confidence. ")
+                    append("A new scan is unlikely to produce new results unless I have been granted access to ")
+                    append("channels I was previously unable to reach. ")
+                    append("This is because Discord, likely accidentally, started fixing vulnerable images in early ")
+                    append("January 2023, so a secondary scan should not find anything new.\n")
+                    append("However, if you would like to continue with scanning for and deleting images with **")
+                    append(confidence.displayName).append("** or higher `/confidence`, please confirm below.")
                 }
                 components += row(
                     success("purge:yes", "Yes"),
@@ -210,7 +225,6 @@ object Bot {
             }).queue()
             val confidence = state.deletionThreshold[event.guild!!.idLong] ?: ScanConfidence.DEFAULT
             state.inProgressScans[event.guild!!.idLong] = ScanState(event.user.idLong, confidence)
-            // TODO: disallow scans equal or stricter to one done previously
             launch(scanJob) { scan(event.guild!!) }
         } }
         // count
@@ -219,10 +233,21 @@ object Bot {
                 event.reply("I'm already scanning this server! Please wait until I'm done.").setEphemeral(true).queue()
                 return@coroutineScope
             }
+            val hasPreviousScan = event.guild!!.idLong in state.finishedScans
+            val previousScan = state.finishedScans[event.guild!!.idLong]
             event.reply(MessageCreate {
-                content = buildString {
+                content = if (!hasPreviousScan) buildString {
                     append("Scanning has begun. This will take a while, so I'll DM you the results when I'm done. ")
                     append("(Don't forget to enable DMs from server members!)")
+                } else buildString {
+                    append("Scanning has begun. This will take a while, so I'll DM you the results when I'm done.\n")
+                    append("Note that this guild has already scanned for vulnerable images")
+                    if (previousScan != null)
+                        append(" with **").append(previousScan.displayName).append("** or higher confidence")
+                    append(". A new scan is unlikely to produce new results unless I have been granted access to ")
+                    append("channels I was previously unable to reach. ")
+                    append("This is because Discord, likely accidentally, started fixing vulnerable images in early ")
+                    append("January 2023, so a secondary scan should not find anything new.\n")
                 }
                 components += row(
                     secondary("scan:cancel", "Cancel")
@@ -292,7 +317,7 @@ object Bot {
                             primary("opt-out:archiving:yes", "Yes"),
                             secondary("opt-out:archiving:no", "No")
                         )
-                    }).queue()
+                    }).setEphemeral(ephemeral).queue()
                 } else {
                     flags.add(OptOutFlag.ARCHIVING)
                     state.optOut[userId] = flags
@@ -348,7 +373,7 @@ object Bot {
                 val guildId = event.values.first().toLong()
                 val guild = jda.getGuildById(guildId)
                 if (guild == null) {
-                    event.reply("That server no longer exists.").queue()
+                    event.editMessage_("That server no longer exists.", replace = true).queue()
                 } else {
                     sendDownloadLink(event, guildId)
                 }
@@ -382,8 +407,7 @@ object Bot {
                 val userId = event.user.idLong
                 val toDelete = archivesForUser(userId)
                 if (toDelete.isEmpty()) {
-                    event.editMessage_("You do not currently have any archived images to delete.", replace = true)
-                        .queue()
+                    event.editMessage_("You do not currently have any archived images to delete.", replace = true).queue()
                 } else {
                     val callback = event.deferEdit()
                     withContext(Dispatchers.IO) { toDelete.forEach { s3.deleteObject(bucket, it.key) } }
@@ -395,44 +419,19 @@ object Bot {
             }
         }
 
-        // init archiver
-        if (s3 != null) {
-            archiveQueue = ArrayDeque()
-            archiveThread = Thread({ runBlocking {
-                while (true) {
-                    val message = archiveQueue.pollFirst()
-                    if (message == null) {
-                        if (lateStopping) return@runBlocking
-                        delay(1000)
-                        continue
-                    }
-                    val lockKey = "${message.guild.idLong}/${message.author.idLong}"
-                    val lock = archiveLocks.getOrPut(lockKey) { Mutex() }
-                    launch {
-                        try {
-                            lock.lock()
-                            archive(message)
-                            // TODO!!!!!!!!!!!!!! message.delete().await()
-                        } catch (e: Exception) {
-                            logger.atError().setCause(e).log("Failed to archive message")
-                        } finally {
-                            lock.unlock()
-                        }
-                    }
-                }
-            } }, "Archiver").apply { start() }
-        } else {
-            logger.atInfo().log("S3 not configured; archiving disabled")
-            archiveQueue = null
-            archiveThread = null
-        }
+        if (s3 == null) logger.atInfo().log("S3 not configured; archiving disabled")
+
+        // shutdown hook
+        Runtime.getRuntime().addShutdownHook(shutdownThread)
     }
 
     private suspend fun start() = coroutineScope {
         // wait for load
         logger.atInfo().log("Waiting for ready")
         jda.awaitReady()
-        logger.atInfo().log("Ready")
+        logger.atInfo().log("=====")
+        logger.atInfo().log { "Logged in as ${jda.selfUser.asTag} (${jda.selfUser.id})" }
+        logger.atInfo().log { "Serving ${jda.guilds.size} guilds" }
         for (guildId in state.inProgressScans.keys) {
             val guild = jda.getGuildById(guildId)
             if (guild == null) {
@@ -447,10 +446,7 @@ object Bot {
             val scanner = java.util.Scanner(System.`in`)
             while (scanner.hasNextLine()) {
                 when (scanner.nextLine()) {
-                    "stop" -> {
-                        shutdownThread.start()
-                        break
-                    }
+                    "stop" -> exitProcess(0)
                     "save" -> {
                         saveState()
                         logger.atInfo().log("Saved state")
@@ -465,15 +461,12 @@ object Bot {
     private fun shutdown() {
         logger.atInfo().log("Stopping")
         stopping = true
-        Thread.sleep(60 * 1000)
+        Thread.sleep(10 * 1000)
         runBlocking { scanJob.cancelAndJoin() }
-        lateStopping = true
         jda.shutdown()
         jda.awaitShutdown()
         saveState()
-        archiveThread?.join()
         logger.atInfo().log("Stopped")
-        exitProcess(0)
     }
 
     private fun sendDownloadLink(interaction: IReplyCallback, guildId: Long) {
@@ -482,10 +475,15 @@ object Bot {
             return
         }
         val key = "archive/${guildId}/${interaction.user.idLong}.zip"
-        val expiration: Date = Date.from(Instant.now().plus(1, ChronoUnit.HOURS))
-        val url = try {
-            s3.generatePresignedUrl(bucket, key, expiration, HttpMethod.GET)
-        } catch (e: SdkClientException) {
+        val url: URL?
+        = if (s3.doesObjectExist(bucket, key)) {
+            val expiration: Date = Date.from(Instant.now().plus(1, ChronoUnit.HOURS))
+            try {
+                s3.generatePresignedUrl(bucket, key, expiration, HttpMethod.GET)
+            } catch (e: SdkClientException) {
+                null
+            }
+        } else {
             null
         }
         if (url == null) {
@@ -551,7 +549,7 @@ object Bot {
         val threshold = scanState.threshold
 
         if (threshold != null && s3 != null) withContext(Dispatchers.IO) {
-            val archivePath = Path("anticropalypse", "archive", guild.id)
+            val archivePath = archiveDir.resolve(guild.id)
             if (!Files.exists(archivePath)) {
                 Files.createDirectories(archivePath)
                 // download existing archives for this guild
@@ -570,16 +568,25 @@ object Bot {
                     launch { tryScan(channel, scanState) }
                 }
             }
+            if (stopping) return
             scanState.closing = ClosingState()
         }
 
         val closingState = scanState.closing!!
 
         // DM requester results
+        val requester = jda.retrieveUserById(scanState.requester).await()
         if (!closingState.requesterMessaged) {
             try {
-                val requester = jda.retrieveUserById(scanState.requester).await()
-                requester.openPrivateChannel().await().send(buildString {
+                val requesterChannel = retryUntilSuccess<PrivateChannel, Exception>(
+                    0,
+                    { e ->
+                        if (e !is ErrorResponseException) throw e
+                        if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e
+                    },
+                    { requester.openPrivateChannel().await() }
+                )
+                requesterChannel.send(buildString {
                     append("I have finished scanning ").append(guild.name).append(" for vulnerable screenshots. ")
                     val skippedChannels = scanState.channels.filter { it.value.missingPermissions.isNotEmpty() }
                     if (skippedChannels.isNotEmpty()) {
@@ -609,7 +616,10 @@ object Bot {
                     append("The full results, where the first column corresponds to the likelihood of an image being vulnerable, are as follows:\n>>> ")
                     for ((confidence, count) in scanState.tally) {
                         if (threshold != null && confidence > threshold) break
-                        append(confidence.displayName).append(": ").append(count).append('\n')
+                        append(confidence.displayName)
+                        if (threshold != null && confidence == threshold)
+                            append(" or higher")
+                        append(": ").append(count).append('\n')
                     }
                     if (threshold != null && threshold < ScanConfidence.CERTAIN)
                         append("_To reduce server load, statistics were not collected for confidence levels above the threshold you selected._")
@@ -623,75 +633,87 @@ object Bot {
             }
 
             // DM members their removed messages
-            if (s3 != null) {
-                withContext(Dispatchers.IO) {
-                    for (zipPath in Files.list(Path("anticropalypse", "archive", guild.id))) {
-                        // get user id
-                        val userId = zipPath.fileName.toString().substringBefore('.').toLong()
-                        if (userId in closingState.archivesTriedMessage) continue
-                        // upload archive to s3
-                        if (userId !in closingState.archivesUploaded) {
-                            s3.putObject(
-                                bucket,
-                                "archive/${guild.id}/${zipPath.fileName}",
-                                zipPath.toFile()
-                            )
-                        }
-                        // retrieve user
-                        val user = jda.retrieveUserById(userId).await()
-                        if (user == null) {
-                            logger.atWarn().log { "Failed to retrieve user $userId from guild ${guild.name} (${guild.id})" }
-                            closingState.archivesNotMessaged.add(userId)
-                            continue
-                        }
-                        // send message
-                        val channel = retryUntilSuccess<PrivateChannel, Exception>(
-                            0,
-                            { e ->
-                                if (e !is ErrorResponseException) throw e
-                                if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e
-                            },
-                            { user.openPrivateChannel().await() }
+            if (s3 != null && threshold != null) { withContext(Dispatchers.IO) {
+                val archivePath = archiveDir.resolve(guild.id)
+                for (zipPath in Files.list(archivePath)) {
+                    // get user id
+                    val userId = zipPath.fileName.toString().substringBefore('.').toLong()
+                    if (userId in closingState.archivesTriedMessage) continue
+                    // upload archive to s3
+                    // TODO: skip upload for small archives (<8MB)
+                    if (userId !in closingState.archivesUploaded) {
+                        s3.putObject(
+                            bucket,
+                            "archive/${guild.id}/${zipPath.fileName}",
+                            zipPath.toFile()
                         )
-                        val isFirstDM = channel.latestMessageIdLong == 0L && channel.iterableHistory.takeAsync(1).await().isEmpty()
-                        val message = if (isFirstDM) buildString {
-                            append("Hi there! A server you are or were in, ").append(guild.name)
-                            append(", requested that I scan their server for and delete certain old screenshots. ")
-                            append("Specifically, I have deleted screenshots that I found to be vulnerable to a ")
-                            append("recently discovered exploit which could allow bad actors to extract the original ")
-                            append("image for an edited screenshot on certain devices (Google Pixel, Windows Snipping ")
-                            append("Tool, etc.) For example, if you've ever taken a cropped screenshot of a purchase ")
-                            append("confirmation email or an email from your work/school, a bad actor could extract ")
-                            append("your original screenshot with potentially identifying information like your name, ")
-                            append("phone number, address, etc.\n\n")
-                            append("During this scan of the server, I found and deleted several screenshots of yours ")
-                            append("that were susceptible to this vulnerability. If at any time you would like to ")
-                            append("download these screenshots then please run the `/download` command to receive a ")
-                            append("temporary download link. Otherwise, you may run `/forget-me` to remove all of ")
-                            append("your archived screenshots and `/opt-out` to opt-out of having your messages ")
-                            append("deleted and/or archived in the future.")
-                        } else buildString {
-                            // TODO: don't send to requester
-                            append("Hi again! A server you are or were in, ").append(guild.name)
-                            append(", has new archived screenshots available for you. Per usual, you can run ")
-                            append("`/download` to download them, `/forget-me` to delete them, and/or ")
-                            append("`/opt-out` to not have your images archived/deleted anymore.")
-                        }
-                        try {
-                            channel.sendMessage(message).queue() // TODO: async launch
-                            closingState.archivesMessaged.add(userId)
-                        } catch (e: Exception) {
-                            // TODO: catch DM ratelimit exception?
+                    }
+                    // retrieve user
+                    val user = jda.retrieveUserById(userId).await()
+                    if (user == null) {
+                        logger.atWarn().log { "Failed to retrieve user $userId from guild ${guild.name} (${guild.id})" }
+                        closingState.archivesNotMessaged.add(userId)
+                        continue
+                    }
+                    // send message
+                    val channel = retryUntilSuccess<PrivateChannel, Exception>(
+                        0,
+                        { e ->
+                            if (e !is ErrorResponseException) throw e
+                            if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e
+                        },
+                        { user.openPrivateChannel().await() }
+                    )
+                    val isFirstDM = channel.latestMessageIdLong == 0L && channel.iterableHistory.takeAsync(1).await().isEmpty()
+                    val message = if (isFirstDM) buildString {
+                        append("Hi there! A server you are or were in, ").append(guild.name)
+                        append(", requested that I scan their server for and delete certain old screenshots. ")
+                        append("Specifically, I have deleted screenshots that I found to be vulnerable to a ")
+                        append("recently discovered exploit which could allow bad actors to extract the original ")
+                        append("image for an edited screenshot on certain devices (Google Pixel, Windows Snipping ")
+                        append("Tool, etc.) For example, if you've ever taken a cropped screenshot of a purchase ")
+                        append("confirmation email or an email from your work/school, a bad actor could extract ")
+                        append("your original screenshot with potentially identifying information like your name, ")
+                        append("phone number, address, etc.\n\n")
+                        append("During this scan of the server, I found and deleted several screenshots of yours ")
+                        append("that were susceptible to this vulnerability. If at any time you would like to ")
+                        append("download these screenshots then please run the `/download` command to receive a ")
+                        append("temporary download link. Otherwise, you may run `/forget-me` to remove all of ")
+                        append("your archived screenshots and `/opt-out` to opt-out of having your messages ")
+                        append("deleted and/or archived in the future.")
+                    } else if (user.idLong == requester.idLong) buildString {
+                        append("Ah, I see why you needed my help! It seems I found and deleted several screenshots ")
+                        append("of yours. Well, like everyone else, you can run `/download` to receive a ")
+                        append("temporary download link, `/forget-me` to remove all of your archived screenshots, ")
+                        append("and/or `/opt-out` to opt-out of having your messages deleted and/or archived in ")
+                        append("the future.")
+                    } else buildString {
+                        append("Hi again! A server you are or were in, ").append(guild.name)
+                        append(", has new archived screenshots available for you. Per usual, you can run ")
+                        append("`/download` to download them, `/forget-me` to delete them, and/or ")
+                        append("`/opt-out` to not have your images archived/deleted anymore.")
+                    }
+                    channel.sendMessage(message).queue(
+                        { closingState.archivesMessaged.add(userId) },
+                        { e ->
                             // user probably just has DMs disabled, no big deal
                             logger.atDebug().setCause(e).log { "Failed to message user $userId from guild ${guild.name} (${guild.id})" }
                             closingState.archivesNotMessaged.add(userId)
                         }
-                    }
+                    )
                 }
-            }
+                // delete archive directory
+                Files.walk(archivePath).sorted(Comparator.reverseOrder()).forEach(Files::delete)
+            } }
 
             // remove scan state
+            logger.atInfo().log { "Finished scanning guild ${guild.name} (${guild.id})" }
             state.inProgressScans.remove(guild.idLong)
+            val previousScan = state.finishedScans[guild.idLong]
+            if (previousScan == null)
+                state.finishedScans[guild.idLong] = threshold
+            else if (threshold != null)
+                state.finishedScans[guild.idLong] = min(threshold, previousScan)
         }
     }
 
@@ -721,19 +743,18 @@ object Bot {
             launch { scan(channel, scanState, channelState)}
         if (channel is IThreadContainer) {
             val threads = channel.threadChannels.toMutableList()
-            channel.retrieveArchivedPublicThreadChannels().forEachAsync {
-                threads += it
-                return@forEachAsync true
-            }.await()
+            threads += channel.retrieveArchivedPublicThreadChannels().takeWhileAsync { true }.await()
             try {
                 val privateThreads = if (PermissionUtil.checkPermission(channel, channel.guild.selfMember, Permission.MANAGE_THREADS))
                     channel.retrieveArchivedPrivateThreadChannels()
                 else
                     channel.retrieveArchivedPrivateJoinedThreadChannels()
-                privateThreads.forEachAsync {
+                privateThreads.forEachAsync({
                     threads += it
                     return@forEachAsync true
-                }.await()
+                }, {
+                    // empty exception handler (handled by the await() and catch)
+                }).await()
             } catch (e: ErrorResponseException) {
                 if (e.errorResponse != ErrorResponse.INVALID_CHANNEL_TYPE)
                     logger.atError().setCause(e).log("Unexpected error while retrieving private threads")
@@ -757,25 +778,37 @@ object Bot {
             if (stopping) return
             logger.atDebug().log { "Scanning messages in ${channel.name} (${channel.id}) after ${channelState.lastMessage}" }
             val history = retryUntilSuccess(7) { channel.getHistoryAfter(channelState.lastMessage, 100).await() }
-            if (history.isEmpty) {
+            val messages = history.retrievedHistory.filter { it.timeCreated.isBefore(cutoff) }.sortedBy { it.idLong }
+            if (messages.isEmpty()) {
                 channelState.lastMessage = Long.MAX_VALUE
                 break
             }
-            withContext(NonCancellable) { // hold on mom I'm scanning
-                val messages = history.retrievedHistory.sortedBy { it.idLong }
-                channelState.lastMessage = messages.last().idLong
-                for (message in messages) { launch {
-                    // TODO: stop searching when we hit a message newer than discord's implementation of PNG stripping?
+            for (message in messages) {
+                if (stopping) return // check for cancellation
+                withContext(NonCancellable) {
                     val result = scanMessage(message, threshold ?: ScanConfidence.CERTAIN)
                     if (threshold != null && result >= threshold) {
-                        if (archiveQueue != null) {
-                            archiveQueue.addLast(message) // TODO: I think Kotlin provides a better way to do this (actors?)
-                        } else {
-                            // TODO!!!!!!!!!!!!!! message.delete().queue()
+                        if (s3 != null) {
+                            val lockKey = "${message.guild.idLong}/${message.author.idLong}"
+                            val lock = archiveMetaLock.withLock { archiveLocks.getOrPut(lockKey) { Mutex() } }
+                            try {
+                                lock.lock()
+                                archive(message)
+                                logger.atDebug().log { "Archived message in #${channel.name} in ${channel.guild.name}: ${message.jumpUrl}" }
+                            } catch (e: Exception) {
+                                logger.atError().setCause(e).log("Failed to archive message")
+                            } finally {
+                                lock.unlock()
+                            }
                         }
-                        logger.atDebug().log { "Queued message for deletion in #${channel.name} in ${channel.guild.name}: ${message.jumpUrl}" }
+                        message.delete().queue({
+                            logger.atDebug().log { "Deleted message in #${channel.name} in ${channel.guild.name}: ${message.jumpUrl}" }
+                        }, {
+                            logger.atError().setCause(it).log { "Failed to delete message: ${message.jumpUrl}" }
+                        })
                     }
-                } }
+                    channelState.lastMessage = message.idLong
+                }
             }
         }
     }
@@ -785,7 +818,7 @@ object Bot {
         val guild = channel.guild
         val author = message.author
         // add TXT file with message content & image attachments to ZIP
-        val path = Path("anticropalypse", "archive", guild.id, "${author.id}.zip")
+        val path = archiveDir.resolve(Path(guild.id, "${author.id}.zip"))
         val uri = URI.create("jar:" + path.toUri()) // TODO: this seems redundant
         withContext(Dispatchers.IO) {
             FileSystems.newFileSystem(uri, mapOf("create" to true, "encoding" to "UTF-8")).use { fs ->
@@ -801,8 +834,16 @@ object Bot {
                 })
                 for (attachment in message.attachments) {
                     val attachmentPath = fs.getPath("${message.id}-${attachment.fileName}")
-                    val inputStream = attachment.proxy.download().await()
-                    Files.copy(inputStream, attachmentPath)
+                    try {
+                        scanner.strip(attachment.proxy.download().await()).use {
+                            Files.copy(it, attachmentPath)
+                        }
+                    } catch (_: FileAlreadyExistsException) {
+                        // unimportant error, probably just failed to delete the message in the original purge
+                        logger.atDebug().log { "Failed to archive attachment ${attachment.url} as file already exists" }
+                    } catch (e: Exception) {
+                        logger.atWarn().setCause(e).log { "Failed to archive attachment ${attachment.url}" }
+                    }
                 }
             }
         }
@@ -811,6 +852,10 @@ object Bot {
 
 fun <T : Comparable<T>> max(a: T, b: T): T {
     return if (a > b) a else b
+}
+
+fun <T : Comparable<T>> min(a: T, b: T): T {
+    return if (a < b) a else b
 }
 
 /**

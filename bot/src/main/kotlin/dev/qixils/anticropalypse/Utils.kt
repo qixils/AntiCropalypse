@@ -1,4 +1,4 @@
-package dev.qixils.acropalypse
+package dev.qixils.anticropalypse
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -9,7 +9,6 @@ suspend inline fun <T : Any?> retryUntilSuccess(limit: Int = 10, block: () -> T)
 }
 
 suspend inline fun <T : Any?, reified E : Exception> retryUntilSuccess(limit: Int = 10, exceptionHandler: (E) -> Unit = {}, block: () -> T): T {
-    check(limit > 0)
     var count = 0
     var exception: Exception? = null
     while (limit <= 0 || count < limit) {

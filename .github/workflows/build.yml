@@ -1,0 +1,21 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+      - name: Build
+        run: ./gradlew build
+      - name: Upload Bot Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: bot
+          path: bot/build/distributions/bot-*.zip

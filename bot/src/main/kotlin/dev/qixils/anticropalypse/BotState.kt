@@ -1,4 +1,4 @@
-package dev.qixils.acropalypse
+package dev.qixils.anticropalypse
 
 import kotlinx.serialization.Serializable
 import net.dv8tion.jda.api.Permission
@@ -6,7 +6,7 @@ import net.dv8tion.jda.api.Permission
 @Serializable
 data class BotState(
     val inProgressScans: MutableMap<Long, ScanState> = mutableMapOf(), // map of guild ID to scan state
-    val finishedScans: MutableMap<Long, ScanConfidence> = mutableMapOf(),
+    val finishedScans: MutableMap<Long, ScanConfidence?> = mutableMapOf(),
     val deletionThreshold: MutableMap<Long, ScanConfidence> = mutableMapOf(), // map of guild ID to deletion threshold
     val optOut: MutableMap<Long, MutableSet<OptOutFlag>> = mutableMapOf(), // set of user IDs that have opted out of scanning
 )

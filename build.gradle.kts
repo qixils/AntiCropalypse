@@ -4,8 +4,8 @@ plugins {
 }
 
 allprojects {
-    group = "dev.qixils.acropalypse"
-    version = "1.0-SNAPSHOT"
+    group = property("group")!!
+    version = property("version")!!
 
     repositories {
         mavenCentral()
