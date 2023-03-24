@@ -13,7 +13,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
       - name: Build
-        run: ./gradlew build
+        run: |
+          chmod +x gradlew
+          ./gradlew build
       - name: Upload Bot Artifact
         uses: actions/upload-artifact@v3
         with:
