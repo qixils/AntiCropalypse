@@ -83,8 +83,8 @@
             would by iterating through all its chunks and stopping once it reaches the "IEND" of the file. Unlike a
             normal PNG parser, it then checks to see if there is any excess data at the end of the file. If so, it
             tries to continue parsing and decoding these PNG chunks. If this proceeds without any errors, then the bot
-            can safely determine that two images are contained within the file (one the cropped screenshot, the other
-            the original image) and flags the message for archival and deletion.
+            can safely determine that a recoverable part of another image (the original screenshot) is buried at the end
+            of this other image file (the "cropped" screenshot) and flags the message for archival and deletion.
         </p>
         <p>
             The bot performs this check on every attachment and image link in every message in every channel in a
