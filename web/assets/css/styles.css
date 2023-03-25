@@ -1,0 +1,95 @@
+html {
+    background-color: #111;
+    color: white;
+    font-family: 'Roboto', sans-serif;
+    font-size: 1.05em;
+    font-weight: 400;
+}
+
+#title {
+    font-family: 'Righteous', sans-serif;
+    font-size: xxx-large;
+    text-align: center;
+    letter-spacing: 3px;
+}
+
+#crop {
+    color: #FF1A1A;
+    background-color: #222;
+    padding: .05em .05em .15em;
+    margin: 0 .05em;
+    position: relative;
+    /* TODO: fancy border */
+}
+
+#crop::before, #crop::after {
+    position: absolute;
+    width: 0.2em;
+    height: 0.2em;
+    border-style: solid;
+    border-color: white;
+    content: ' ';
+}
+
+#crop::before {
+    bottom: -0.1em;
+    left: -0.1em;
+    border-width: 0 0 0.2em 0.2em;
+}
+
+#crop::after {
+    top: -0.1em;
+    right: -0.1em;
+    border-width: 0.2em 0.2em 0 0;
+}
+
+#container {
+    width: 100%;
+    max-width: 50em;
+    margin: 0 auto;
+}
+
+a {
+    color: #0CAEF3;
+}
+
+.button {
+    background-color: #5865f2;
+    color: white;
+    padding: 0.5em 1em;
+    border-radius: 0.5em;
+    font-size: 1.2em;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+#invite {
+    text-align: center;
+    display: block;
+}
+
+code {
+    background-color: #222;
+    font-family: 'Fira Mono', monospace;
+    font-size: 0.8em;
+    padding: 0.2em;
+}
+
+th {
+    font-size: 1.1em;
+    font-weight: 700;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+th, td {
+    border: 1px solid #333;
+    padding: .4em;
+}
+
+table tr:first-of-type {
+    background-color: #222;
+}

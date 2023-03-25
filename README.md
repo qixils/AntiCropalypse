@@ -1,34 +1,27 @@
-# anticropalypse
+# [AntiCropalypse](https://anticropalypse.qixils.dev)
 
 Discord bot which searches for and deletes images vulnerable to the Acropalypse exploit (CVE-2023-21036).
-The public bot can be invited [here](https://discord.com/api/oauth2/authorize?client_id=1086809498632593470&permissions=17179943936&scope=bot%20applications.commands).
-
-Active scanning has been omitted as Discord started stripping excess image data in January.
-Instead, this bot's purpose is to search for and delete old vulnerable images.
-The bot can optionally archive deleted images (with the excess data stripped!) to an S3 bucket.
-
-## Usage
-
-<!-- TODO: colspan? -->
-
-| Command               | Description                                                                       |
-|-----------------------|-----------------------------------------------------------------------------------|
-| **User Commands**     |
-| `/download`           | Fetches a download link for all of your vulnerable images that were deleted       |
-| `/forget-me`          | Removes your archives of deleted images                                           |
-| `/opt-out archiving`  | Opts-out of having your deleted screenshots backed up for you to download         |
-| `/opt-out everything` | Opts-out of having your vulnerable screenshots scanned, deleted, or archived      |
-| **Admin Commands**    |
-| `/count`              | Searches for and counts potentially vulnerable images                             |
-| `/confidence`         | Configures how confident the bot should be before deleting an image               |
-| `/purge`              | Searches for and deletes vulnerable images according to the configured confidence |
+You can learn more about the project and add the public bot to your server
+[**here**](https://anticropalypse.qixils.dev).
 
 ## Self-hosting
 
-To use, set the required environment variables (see below) and run `./gradlew :bot:run`.
+This bot is written in Kotlin and requires Java 17 to compile and run.
 
-To create a distributable build, run `./gradlew :bot:distTar` or `./gradlew :bot:distZip` and share/extract the
-resulting archive from `bot/build/distributions`.
+### Releases
+
+Running the bot is as simple as downloading the
+[latest release](https://github.com/qixils/anticropalypse/releases/latest),
+setting the required environment variables (see below),
+and running the `bin/bot` script.
+
+### Building from source
+
+To create a distributable build like the published releases, run `./gradlew build`
+and share/extract the resulting archive from `bot/build/distributions`.
+
+Otherwise, you can run the bot directly by setting the required environment variables (see below)
+and running `./gradlew :bot:run`.
 
 ### Environment variables
 

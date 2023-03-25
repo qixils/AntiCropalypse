@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>AntiCropalypse</title>
+
+    <link rel="stylesheet" href="/assets/css/styles.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Mono&family=Righteous&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+
+    <meta name="format-detection" content="telephone=no">
+    <meta name="description" content="Discord bot for mitigating the aCropalypse vulnerability (CVE-2023-21036) by retroactively deleting vulnerable images.">
+    <meta property="og:title" content="AntiCropalypse">
+    <meta property="og:description" content="Discord bot for mitigating the aCropalypse vulnerability (CVE-2023-21036) by retroactively deleting vulnerable images.">
+    <meta property="og:image" content="/favicon-512.png">
+    <meta property="og:image:alt" content="The word 'crop' in a red font surrounded by white cropping borders on top of a black background.">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary"> <!-- summary or summary_large_image -->
+    <meta name="twitter:dnt" content="on">
+    <meta property="og:url" content="https://anticropalypse.qixils.dev/">
+    <link rel="canonical" href="https://anticropalypse.qixils.dev/">
+
+    <link rel="icon" href="/favicon-32.png" type="image/png">
+<!--<link rel="icon" href="/favicon.svg" type="image/svg+xml">-->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta name="theme-color" content="#111">
+</head>
+
+<body>
+    <h1 id="title">Anti<span id="crop">Crop</span>alypse</h1>
+    <div id="container">
+        <p>
+            The aCropalypse vulnerability (CVE-2023-21036) has lit the internet ablaze with fear over the mounds of
+            screenshots uploaded to social media websites over the past several years that could potentially contain
+            private information like phone numbers, addresses, and even banking information. While many social media
+            platforms reprocess images after uploading (and thus accidentally mitigate the vulnerability), Discord did
+            not do so until January 2023, leaving potentially millions of vulnerable screenshots on the platform open
+            for anyone to grab.
+        </p>
+        <p>
+            Enter AntiCropalypse, an <a href="https://github.com/qixils/anticropalypse">open-source</a> Discord bot that
+            mitigates the aCropalypse vulnerability by retroactively deleting vulnerable images. In only a few minutes,
+            server admins can install and set up the bot to have it off on its merry way happily deleting and archiving
+            vulnerable images. Once it's complete, the bot will report on the tally of vulnerable images and give every
+            affected user instructions on how to download their archived (and fixed!) images.
+        </p>
+        <a class="button" id="invite" href="https://discord.com/api/oauth2/authorize?client_id=1086809498632593470&permissions=17179943936&scope=bot%20applications.commands">
+            Add to Server
+        </a>
+
+        <h2>How aCropalypse Works</h2>
+        <p>
+            The aCropalypse vulnerability is a result of how cropped screenshots are saved to a device. The issue was
+            first discovered on Google Pixel devices where a regression in Android 10 meant that, when overwriting an
+            existing file (say, the original uncropped screenshot), the original file would not get fully overwritten.
+            This meant that every time you cropped or edited a screenshot on a Google Pixel, it would only partially
+            overwrite the original file, leaving a ton of the original image's data in the final file. This data could
+            then be recovered by a malicious actor, allowing them to access whatever part of the image you tried to crop
+            or edit out: names, phone numbers, addresses, et cetera.
+        </p>
+        <p>
+            This vulnerability has also been found to affect screenshots taken on the Windows 10+ Snip & Sketch and the
+            Windows 11 Snipping Tool, although to a much lesser extent. Since the issue arises from saving files, one
+            would need to have snipped and saved a screenshot, then decided they wanted to crop it further and save it
+            again.
+        </p>
+
+        <h2>How AntiCropalypse Works</h2>
+        <p>
+            <i>
+                With thanks to retr0id who wrote up an excellent
+                <a href="https://www.da.vidbuchanan.co.uk/blog/exploiting-acropalypse.html">article</a>
+                for developers to learn more about the vulnerability.
+            </i>
+        </p>
+        <p>
+            To tell if an image is vulnerable, AntiCropalypse starts by parsing the image like any other PNG parser
+            would by iterating through all its chunks and stopping once it reaches the "IEND" of the file. Unlike a
+            normal PNG parser, it then checks to see if there is any excess data at the end of the file. If so, it
+            tries to continue parsing and decoding these PNG chunks. If this proceeds without any errors, then the bot
+            can safely determine that two images are contained within the file (one the cropped screenshot, the other
+            the original image) and flags the message for archival and deletion.
+        </p>
+        <p>
+            The bot performs this check on every attachment and image link in every message in every channel in a
+            server. When it finds a vulnerable image, it safely archives the message and its (fixed!) image attachments
+            to a private cloud server and then deletes the message. Once it's finished scanning the whole server, it
+            reports back to the user who started the scan with the tally of vulnerable messages and then informs every
+            affected user of the vulnerability and how to download their archived images.
+        </p>
+
+        <h3>Commands</h3>
+        <table>
+            <tr>
+                <th>Command</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td colspan="2">User Commands</td>
+            </tr>
+            <tr>
+                <td><code>/download</code></td>
+                <td>Fetches a download link for all of your vulnerable images that were deleted</td>
+            </tr>
+            <tr>
+                <td><code>/forget-me</code></td>
+                <td>Removes your archives of deleted images</td>
+            </tr>
+            <tr>
+                <td><code>/opt-out archiving</code></td>
+                <td>Opts-out of having your deleted screenshots backed up for you to download</td>
+            </tr>
+            <tr>
+                <td><code>/opt-out everything</code></td>
+                <td>Opts-out of having your vulnerable screenshots scanned, deleted, or archived</td>
+            </tr>
+            <tr>
+                <td colspan="2">Admin Commands</td>
+            </tr>
+            <tr>
+                <td><code>/count</code></td>
+                <td>Searches for and counts potentially vulnerable images</td>
+            </tr>
+            <tr>
+                <td><code>/confidence</code></td>
+                <td>Configures how confident the bot should be before deleting an image</td>
+            </tr>
+            <tr>
+                <td><code>/purge</code></td>
+                <td>Searches for and deletes vulnerable images according to the configured confidence</td>
+            </tr>
+        </table>
+
+        <h3>Self-Hosting</h3>
+        <p>
+            AntiCropalypse is <a href="https://github.com/qixils/anticropalypse">open-source</a> and can be self-hosted
+            if you wish to archive images to your own cloud server or omit archiving entirely. See the repository's
+            README for more information on how to run the bot.
+        </p>
+    </div>
+</body>
+</html>
