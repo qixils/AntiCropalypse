@@ -628,98 +628,98 @@ object Bot {
                     if (threshold != null && threshold < ScanConfidence.CERTAIN)
                         append("_To reduce server load, statistics were not collected for confidence levels above the threshold you selected._")
                 }).await()
-                scanState.closing!!.requesterMessaged = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logger.atWarn().setCause(e).log { "Failed to message user ${scanState.requester} from guild ${guild.name} (${guild.id})" }
-                scanState.closing!!.requesterMessaged = true
+                logger.atWarn().setCause(e)
+                    .log { "Failed to message user ${scanState.requester} from guild ${guild.name} (${guild.id})" }
             }
+            scanState.closing!!.requesterMessaged = true
+        }
 
-            // DM members their removed messages
-            if (s3 != null && threshold != null) { withContext(Dispatchers.IO) {
-                val archivePath = archiveDir.resolve(guild.id)
-                for (zipPath in Files.list(archivePath)) {
-                    // get user id
-                    val userId = zipPath.fileName.toString().substringBefore('.').toLong()
-                    if (userId in closingState.archivesTriedMessage) continue
-                    if (state.isOptedOut(userId, OptOutFlag.ARCHIVING)) continue
-                    // upload archive to s3
-                    // TODO: skip upload for small archives (<8MB)
-                    if (userId !in closingState.archivesUploaded) {
-                        s3.putObject(
-                            bucket,
-                            "archive/${guild.id}/${zipPath.fileName}",
-                            zipPath.toFile()
-                        )
-                    }
-                    // retrieve user
-                    val user = jda.retrieveUserById(userId).await()
-                    if (user == null) {
-                        logger.atWarn().log { "Failed to retrieve user $userId from guild ${guild.name} (${guild.id})" }
-                        closingState.archivesNotMessaged.add(userId)
-                        continue
-                    }
-                    // send message
-                    val channel = retryUntilSuccess<PrivateChannel, Exception>(
-                        0,
-                        { e ->
-                            if (e !is ErrorResponseException) throw e
-                            if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e
-                        },
-                        { user.openPrivateChannel().await() }
-                    )
-                    val isFirstDM = channel.latestMessageIdLong == 0L && channel.iterableHistory.takeAsync(1).await().isEmpty()
-                    val message = if (isFirstDM) buildString {
-                        append("Hi there! A server you are or were in, ").append(guild.name)
-                        append(", requested that I scan their server for and delete certain old screenshots. ")
-                        append("Specifically, I have deleted screenshots that I found to be vulnerable to a ")
-                        append("recently discovered exploit which could allow bad actors to extract the original ")
-                        append("image for an edited screenshot on certain devices (Google Pixel, Windows Snipping ")
-                        append("Tool, etc.) For example, if you've ever taken a cropped screenshot of a purchase ")
-                        append("confirmation email or an email from your work/school, a bad actor could extract ")
-                        append("your original screenshot with potentially identifying information like your name, ")
-                        append("phone number, address, etc.\n\n")
-                        append("During this scan of the server, I found and deleted several screenshots of yours ")
-                        append("that were susceptible to this vulnerability. If at any time you would like to ")
-                        append("download these screenshots then please run the `/download` command to receive a ")
-                        append("temporary download link. Otherwise, you may run `/forget-me` to remove all of ")
-                        append("your archived screenshots and `/opt-out` to opt-out of having your messages ")
-                        append("deleted and/or archived in the future.")
-                    } else if (user.idLong == requester.idLong) buildString {
-                        append("Ah, I see why you needed my help! It seems I found and deleted several screenshots ")
-                        append("of yours. Well, like everyone else, you can run `/download` to receive a ")
-                        append("temporary download link, `/forget-me` to remove all of your archived screenshots, ")
-                        append("and/or `/opt-out` to opt-out of having your messages deleted and/or archived in ")
-                        append("the future.")
-                    } else buildString {
-                        append("Hi again! A server you are or were in, ").append(guild.name)
-                        append(", has new archived screenshots available for you. Per usual, you can run ")
-                        append("`/download` to download them, `/forget-me` to delete them, and/or ")
-                        append("`/opt-out` to not have your images archived/deleted anymore.")
-                    }
-                    channel.sendMessage(message).queue(
-                        { closingState.archivesMessaged.add(userId) },
-                        { e ->
-                            // user probably just has DMs disabled, no big deal
-                            logger.atDebug().setCause(e).log { "Failed to message user $userId from guild ${guild.name} (${guild.id})" }
-                            closingState.archivesNotMessaged.add(userId)
-                        }
+        // DM members their removed messages
+        if (s3 != null && threshold != null) { withContext(Dispatchers.IO) {
+            val archivePath = archiveDir.resolve(guild.id)
+            for (zipPath in Files.list(archivePath)) {
+                // get user id
+                val userId = zipPath.fileName.toString().substringBefore('.').toLong()
+                if (userId in closingState.archivesTriedMessage) continue
+                if (state.isOptedOut(userId, OptOutFlag.ARCHIVING)) continue
+                // upload archive to s3
+                // TODO: skip upload for small archives (<8MB)
+                if (userId !in closingState.archivesUploaded) {
+                    s3.putObject(
+                        bucket,
+                        "archive/${guild.id}/${zipPath.fileName}",
+                        zipPath.toFile()
                     )
                 }
-                // delete archive directory
-                Files.walk(archivePath).sorted(Comparator.reverseOrder()).forEach(Files::delete)
-            } }
+                // retrieve user
+                val user = jda.retrieveUserById(userId).await()
+                if (user == null) {
+                    logger.atWarn().log { "Failed to retrieve user $userId from guild ${guild.name} (${guild.id})" }
+                    closingState.archivesNotMessaged.add(userId)
+                    continue
+                }
+                // send message
+                val channel = retryUntilSuccess<PrivateChannel, Exception>(
+                    0,
+                    { e ->
+                        if (e !is ErrorResponseException) throw e
+                        if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e
+                    },
+                    { user.openPrivateChannel().await() }
+                )
+                val isFirstDM = channel.latestMessageIdLong == 0L && channel.iterableHistory.takeAsync(1).await().isEmpty()
+                val message = if (isFirstDM) buildString {
+                    append("Hi there! A server you are or were in, ").append(guild.name)
+                    append(", requested that I scan their server for and delete certain old screenshots. ")
+                    append("Specifically, I have deleted screenshots that I found to be vulnerable to a ")
+                    append("recently discovered exploit which could allow bad actors to extract the original ")
+                    append("image for an edited screenshot on certain devices (Google Pixel, Windows Snipping ")
+                    append("Tool, etc.) For example, if you've ever taken a cropped screenshot of a purchase ")
+                    append("confirmation email or an email from your work/school, a bad actor could extract ")
+                    append("your original screenshot with potentially identifying information like your name, ")
+                    append("phone number, address, etc.\n\n")
+                    append("During this scan of the server, I found and deleted several screenshots of yours ")
+                    append("that were susceptible to this vulnerability. If at any time you would like to ")
+                    append("download these screenshots then please run the `/download` command to receive a ")
+                    append("temporary download link. Otherwise, you may run `/forget-me` to remove all of ")
+                    append("your archived screenshots and `/opt-out` to opt-out of having your messages ")
+                    append("deleted and/or archived in the future.")
+                } else if (user.idLong == requester.idLong) buildString {
+                    append("Ah, I see why you needed my help! It seems I found and deleted several screenshots ")
+                    append("of yours. Well, like everyone else, you can run `/download` to receive a ")
+                    append("temporary download link, `/forget-me` to remove all of your archived screenshots, ")
+                    append("and/or `/opt-out` to opt-out of having your messages deleted and/or archived in ")
+                    append("the future.")
+                } else buildString {
+                    append("Hi again! A server you are or were in, ").append(guild.name)
+                    append(", has new archived screenshots available for you. Per usual, you can run ")
+                    append("`/download` to download them, `/forget-me` to delete them, and/or ")
+                    append("`/opt-out` to not have your images archived/deleted anymore.")
+                }
+                channel.sendMessage(message).queue(
+                    { closingState.archivesMessaged.add(userId) },
+                    { e ->
+                        // user probably just has DMs disabled, no big deal
+                        logger.atDebug().setCause(e).log { "Failed to message user $userId from guild ${guild.name} (${guild.id})" }
+                        closingState.archivesNotMessaged.add(userId)
+                    }
+                )
+            }
+            // delete archive directory
+            Files.walk(archivePath).sorted(Comparator.reverseOrder()).forEach(Files::delete)
+        } }
 
-            // remove scan state
-            logger.atInfo().log { "Finished scanning guild ${guild.name} (${guild.id})" }
-            state.inProgressScans.remove(guild.idLong)
-            val previousScan = state.finishedScans[guild.idLong]
-            if (previousScan == null)
-                state.finishedScans[guild.idLong] = threshold
-            else if (threshold != null)
-                state.finishedScans[guild.idLong] = min(threshold, previousScan)
-        }
+        // remove scan state
+        logger.atInfo().log { "Finished scanning guild ${guild.name} (${guild.id})" }
+        state.inProgressScans.remove(guild.idLong)
+        val previousScan = state.finishedScans[guild.idLong]
+        if (previousScan == null)
+            state.finishedScans[guild.idLong] = threshold
+        else if (threshold != null)
+            state.finishedScans[guild.idLong] = min(threshold, previousScan)
     }
 
     private suspend fun tryScan(channel: GuildChannel, scanState: ScanState) = coroutineScope {
