@@ -110,6 +110,11 @@ enum class ScanConfidence(
     ERROR("Failed to download"),
 
     /**
+     * Message author opted out of scanning.
+     */
+    OPTED_OUT("Opted out"),
+
+    /**
      * No vulnerability was detected.
      */
     NONE("None"),

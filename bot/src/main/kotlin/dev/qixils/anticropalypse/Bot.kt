@@ -510,6 +510,10 @@ object Bot {
     }
 
     private suspend fun scanMessage(message: Message, threshold: ScanConfidence = ScanConfidence.CERTAIN): ScanConfidence {
+        if (state.isOptedOut(message.author.idLong)) {
+            logger.atDebug().log { "Skipping message ${message.jumpUrl} from opt-out user ${message.author.asTag}" }
+            return tally(message, ScanConfidence.OPTED_OUT)
+        }
         logger.atDebug().log { "Scanning message ${message.jumpUrl} (threshold: ${threshold.name})" }
         var confidence = ScanConfidence.ERROR
         for (attachment in message.attachments) {
@@ -639,6 +643,7 @@ object Bot {
                     // get user id
                     val userId = zipPath.fileName.toString().substringBefore('.').toLong()
                     if (userId in closingState.archivesTriedMessage) continue
+                    if (state.isOptedOut(userId, OptOutFlag.ARCHIVING)) continue
                     // upload archive to s3
                     // TODO: skip upload for small archives (<8MB)
                     if (userId !in closingState.archivesUploaded) {

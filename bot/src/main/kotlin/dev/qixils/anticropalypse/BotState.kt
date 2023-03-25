@@ -9,7 +9,18 @@ data class BotState(
     val finishedScans: MutableMap<Long, ScanConfidence?> = mutableMapOf(),
     val deletionThreshold: MutableMap<Long, ScanConfidence> = mutableMapOf(), // map of guild ID to deletion threshold
     val optOut: MutableMap<Long, MutableSet<OptOutFlag>> = mutableMapOf(), // set of user IDs that have opted out of scanning
-)
+) {
+    fun isOptedOut(userId: Long, flag: OptOutFlag): Boolean {
+        if (userId !in optOut) return false
+        if (OptOutFlag.EVERYTHING in optOut[userId]!!) return true
+        return flag in optOut[userId]!!
+    }
+
+    fun isOptedOut(userId: Long): Boolean {
+        if (userId !in optOut) return false
+        return OptOutFlag.EVERYTHING in optOut[userId]!!
+    }
+}
 
 @Serializable
 enum class OptOutFlag {
