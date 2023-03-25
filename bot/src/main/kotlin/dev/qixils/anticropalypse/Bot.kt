@@ -122,7 +122,7 @@ object Bot {
         val region = System.getenv("S3_REGION")
         val accessKey = System.getenv("S3_ACCESS_KEY")
         val secretKey = System.getenv("S3_SECRET_KEY")
-        bucket = System.getenv("S3_BUCKET") ?: "anticropalypse"
+        bucket = System.getenv("S3_BUCKET")
         if (region == null || accessKey == null || secretKey == null) {
             s3 = null
         } else {
