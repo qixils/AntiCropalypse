@@ -39,11 +39,13 @@ import net.dv8tion.jda.api.entities.channel.attribute.IThreadContainer
 import net.dv8tion.jda.api.entities.channel.concrete.PrivateChannel
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel
 import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel
+import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel
 import net.dv8tion.jda.api.events.interaction.command.GenericCommandInteractionEvent
 import net.dv8tion.jda.api.exceptions.ErrorResponseException
 import net.dv8tion.jda.api.interactions.callbacks.IReplyCallback
 import net.dv8tion.jda.api.requests.ErrorResponse
 import net.dv8tion.jda.api.requests.GatewayIntent
+import net.dv8tion.jda.api.requests.RestAction
 import net.dv8tion.jda.api.utils.messages.MessageRequest
 import net.dv8tion.jda.internal.utils.PermissionUtil
 import java.net.URI
@@ -590,7 +592,7 @@ object Bot {
                     },
                     { requester.openPrivateChannel().await() }
                 )
-                requesterChannel.send(buildString {
+                requesterChannel.splitAndSend(buildString {
                     append("I have finished scanning ").append(guild.name).append(" for vulnerable screenshots. ")
                     val skippedChannels = scanState.channels.filter { it.value.missingPermissions.isNotEmpty() }
                     if (skippedChannels.isNotEmpty()) {
@@ -885,4 +887,23 @@ fun <T : Comparable<T>> min(a: T, b: T): T {
 fun JDA.onSubCommand(name: String, timeout: Duration? = null, consumer: suspend CoroutineEventListener.(GenericCommandInteractionEvent) -> Unit) = listener<GenericCommandInteractionEvent>(timeout=timeout) {
     if (it.fullCommandName == name)
         consumer(it)
+}
+
+private val whitespace = Pattern.compile("\\s")
+
+fun MessageChannel.splitAndSend(text: String): RestAction<*> {
+    var current = ""
+    var action: RestAction<*>? = null
+    for (line in text.split("\n")) {
+        if ((current.length + line.length + 1) <= 2000) {
+            current += '\n' + line
+            continue
+        }
+        if (current.isNotEmpty()) {
+            action = action?.flatMap { sendMessage(current) } ?: sendMessage(current)
+        }
+        current = line
+    }
+    action = action?.flatMap { sendMessage(current) } ?: sendMessage(current)
+    return action
 }
