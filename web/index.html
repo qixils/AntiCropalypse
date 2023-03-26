@@ -35,12 +35,12 @@
     <h1 id="title">Anti<span id="crop">Crop</span>alypse</h1>
     <div id="container">
         <p>
-            The aCropalypse vulnerability (CVE-2023-21036) has lit the internet ablaze with fear over the mounds of
-            screenshots uploaded to social media websites over the past several years that could potentially contain
-            private information like phone numbers, addresses, and even banking information. While many social media
-            platforms reprocess images after uploading (and thus accidentally mitigate the vulnerability), Discord did
-            not do so until January 2023, leaving potentially millions of vulnerable screenshots on the platform open
-            for anyone to grab.
+            The aCropalypse vulnerability (CVE-2023-21036 & CVE-2023-28303) has lit the internet ablaze with fear over
+            the mounds of screenshots uploaded to social media websites over the past several years that could
+            potentially contain private information like phone numbers, addresses, and even banking information. While
+            many social media platforms reprocess images after uploading (and thus accidentally mitigate the
+            vulnerability), Discord did not do so until January 2023, leaving potentially millions of vulnerable
+            screenshots on the platform open for anyone to grab.
         </p>
         <p>
             Enter AntiCropalypse, an <a href="https://github.com/qixils/anticropalypse">open-source</a> Discord bot that
@@ -56,18 +56,18 @@
         <h2>How aCropalypse Works</h2>
         <p>
             The aCropalypse vulnerability is a result of how cropped screenshots are saved to a device. The issue was
-            first discovered on Google Pixel devices where a regression in Android 10 meant that, when overwriting an
-            existing file (say, the original uncropped screenshot), the original file would not get fully overwritten.
-            This meant that every time you cropped or edited a screenshot on a Google Pixel, it would only partially
-            overwrite the original file, leaving a ton of the original image's data in the final file. This data could
-            then be recovered by a malicious actor, allowing them to access whatever part of the image you tried to crop
-            or edit out: names, phone numbers, addresses, et cetera.
+            first discovered on Google Pixel devices (CVE-2023-21036) where a regression in Android 10 meant that, when
+            overwriting an existing file (say, the original uncropped screenshot), the original file would not get fully
+            overwritten. This meant that every time you cropped or edited a screenshot on a Google Pixel, it would only
+            partially overwrite the original file, leaving a ton of the original image's data in the final file. This
+            data could then be recovered by a malicious actor, allowing them to access whatever part of the image you
+            tried to crop or edit out: names, phone numbers, addresses, et cetera.
         </p>
         <p>
             This vulnerability has also been found to affect screenshots taken on the Windows 10+ Snip & Sketch and the
-            Windows 11 Snipping Tool, although to a much lesser extent. Since the issue arises from saving files, one
-            would need to have snipped and saved a screenshot, then decided they wanted to crop it further and save it
-            again.
+            Windows 11 Snipping Tool (CVE-2023-28303), although to a much lesser extent. Since the issue arises from
+            saving files, one would need to have snipped and saved a screenshot, then decided they wanted to crop it
+            further and saved it again.
         </p>
 
         <h2>How AntiCropalypse Works</h2>
@@ -145,8 +145,12 @@
 
         <h2>Support</h2>
         <p>
-            If this bot has helped you then please consider supporting its server costs by
-            <a href="https://github.com/sponsors/qixils">sponsoring me on GitHub</a> ❤️
+            If you need help using the bot, feel free to reach out on
+            <a href="https://discord.gg/tVyUQeu">its Discord</a>.
+        </p>
+        <p>
+            Otherwise, if this bot has helped you and you're looking for support it, then you can help contribute to its
+            server costs by <a href="https://github.com/sponsors/qixils">sponsoring me on GitHub</a> ❤️
         </p>
     </div>
 </body>
