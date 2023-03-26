@@ -348,6 +348,7 @@ object Bot {
                     // find all guilds with data available for this user
                     val objects = s3.listObjectsV2(bucket, "archive/")
                     val guilds = objects.objectSummaries
+                        .filter { it.key.split('/')[2].toLong() == event.user.idLong }
                         .map { it.key.split('/')[1] }
                         .distinct()
                     if (guilds.isEmpty()) {
@@ -358,11 +359,9 @@ object Bot {
                         event.reply(MessageCreate {
                             content = "From which server would you like to download your archived images?"
                             components += row(StringSelectMenu("download:guild") {
-                                guilds.forEach { guildId ->
-                                    val guild = jda.getGuildById(guildId)
-                                    if (guild != null) {
-                                        option(guild.name, guildId)
-                                    }
+                                for (guildId in guilds) {
+                                    val guild = jda.getGuildById(guildId) ?: continue
+                                    option(guild.name, guildId)
                                 }
                             })
                         }).queue()
