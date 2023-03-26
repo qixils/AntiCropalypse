@@ -348,7 +348,7 @@ object Bot {
                     // find all guilds with data available for this user
                     val objects = s3.listObjectsV2(bucket, "archive/")
                     val guilds = objects.objectSummaries
-                        .filter { it.key.split('/')[2].toLong() == event.user.idLong }
+                        .filter { it.key.split('/')[2].substringBefore('.').toLong() == event.user.idLong }
                         .map { it.key.split('/')[1] }
                         .distinct()
                     if (guilds.isEmpty()) {
