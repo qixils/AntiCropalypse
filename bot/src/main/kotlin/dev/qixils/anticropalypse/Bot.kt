@@ -775,6 +775,7 @@ object Bot {
                     logger.atError().setCause(e).log("Unexpected error while retrieving private threads")
             }
             for (thread in threads) {
+                if (thread.isArchived && thread.isLocked) continue // TODO: temp unlock?
                 val threadScanState = channelState.threads.getOrPut(thread.idLong) { ThreadScanState() }
                 launch { scan(thread, scanState, threadScanState) }
             }
