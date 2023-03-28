@@ -1,6 +1,7 @@
 # [AntiCropalypse](https://anticropalypse.qixils.dev)
 
-Discord bot which searches for and deletes images vulnerable to the Acropalypse exploit (CVE-2023-21036).
+Discord bot which searches for and deletes images vulnerable to the aCropalypse exploit
+(CVE-2023-21036 & CVE-2023-28303).
 You can learn more about the project and add the public bot to your server
 [**here**](https://anticropalypse.qixils.dev).
 
