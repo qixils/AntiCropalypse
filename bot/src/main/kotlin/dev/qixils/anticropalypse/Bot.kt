@@ -34,6 +34,7 @@ import net.dv8tion.jda.api.Permission
 import net.dv8tion.jda.api.entities.Activity
 import net.dv8tion.jda.api.entities.Guild
 import net.dv8tion.jda.api.entities.Message
+import net.dv8tion.jda.api.entities.User
 import net.dv8tion.jda.api.entities.channel.attribute.IPermissionContainer
 import net.dv8tion.jda.api.entities.channel.attribute.IThreadContainer
 import net.dv8tion.jda.api.entities.channel.concrete.PrivateChannel
@@ -581,8 +582,13 @@ object Bot {
         val closingState = scanState.closing!!
 
         // DM requester results
-        val requester = jda.retrieveUserById(scanState.requester).await()
-        if (!closingState.requesterMessaged) {
+        val requester = try {
+            jda.retrieveUserById(scanState.requester).await()
+        } catch (e: ErrorResponseException) {
+            logger.atWarn().log { "Could not find requester ${scanState.requester} for guild ${guild.name} (${guild.id})" }
+            null
+        }
+        if (!closingState.requesterMessaged && requester != null) {
             try {
                 val requesterChannel = retryUntilSuccess<PrivateChannel, Exception>(
                     0,
@@ -657,8 +663,10 @@ object Bot {
                     )
                 }
                 // retrieve user
-                val user = jda.retrieveUserById(userId).await()
-                if (user == null) {
+                val user: User
+                try {
+                    user = jda.retrieveUserById(userId).await()
+                } catch (e: ErrorResponseException) {
                     logger.atWarn().log { "Failed to retrieve user $userId from guild ${guild.name} (${guild.id})" }
                     closingState.archivesNotMessaged.add(userId)
                     continue
@@ -689,7 +697,7 @@ object Bot {
                     append("temporary download link. Otherwise, you may run `/forget-me` to remove all of ")
                     append("your archived screenshots and `/opt-out` to opt-out of having your messages ")
                     append("deleted and/or archived in the future.")
-                } else if (user.idLong == requester.idLong) buildString {
+                } else if (user.idLong == requester?.idLong) buildString {
                     append("Ah, I see why you needed my help! It seems I found and deleted several screenshots ")
                     append("of yours. Well, like everyone else, you can run `/download` to receive a ")
                     append("temporary download link, `/forget-me` to remove all of your archived screenshots, ")
