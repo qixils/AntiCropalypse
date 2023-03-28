@@ -17,12 +17,13 @@ suspend inline fun <T : Any?, reified E : Exception> retryUntilSuccess(limit: In
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            if (e is E)
-                exceptionHandler(e)
+            if (e !is E)
+                throw e
+            exceptionHandler(e)
             exception = e
             count++
             delay(2f.pow(count).toLong() * 1000L)
         }
     }
-    throw RuntimeException("Retry limit exceeded", exception)
+    throw exception ?: RuntimeException("Retry limit exceeded")
 }

@@ -594,12 +594,9 @@ object Bot {
         }
         if (!closingState.requesterMessaged && requester != null) {
             try {
-                val requesterChannel = retryUntilSuccess<PrivateChannel, Exception>(
+                val requesterChannel = retryUntilSuccess<PrivateChannel, ErrorResponseException>(
                     0,
-                    { e ->
-                        if (e !is ErrorResponseException) throw e
-                        if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e
-                    },
+                    { e -> if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e },
                     { requester.openPrivateChannel().await() }
                 )
                 requesterChannel.splitAndSend(buildString {
@@ -676,12 +673,9 @@ object Bot {
                     continue
                 }
                 // send message
-                val channel = retryUntilSuccess<PrivateChannel, Exception>(
+                val channel = retryUntilSuccess<PrivateChannel, ErrorResponseException>(
                     0,
-                    { e ->
-                        if (e !is ErrorResponseException) throw e
-                        if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e
-                    },
+                    { e -> if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e },
                     { user.openPrivateChannel().await() }
                 )
                 val isFirstDM = channel.latestMessageIdLong == 0L && channel.iterableHistory.takeAsync(1).await().isEmpty()
@@ -797,7 +791,13 @@ object Bot {
             }
             if (stopping) return
             logger.atDebug().log { "Scanning messages in ${channel.name} (${channel.id}) after ${channelState.lastMessage}" }
-            val history = retryUntilSuccess(7) { channel.getHistoryAfter(channelState.lastMessage, 100).await() }
+            val history = try {
+                retryUntilSuccess(7) { channel.getHistoryAfter(channelState.lastMessage, 100).await() }
+            } catch (e: Exception) {
+                logger.atWarn().setCause(e).log { "Failed to retrieve message history for ${channel.name} (${channel.id})" }
+                // TODO: add to missingPermissions?
+                continue
+            }
             val messages = history.retrievedHistory.filter { it.timeCreated.isBefore(cutoff) }.sortedBy { it.idLong }
             if (messages.isEmpty()) {
                 channelState.lastMessage = Long.MAX_VALUE
