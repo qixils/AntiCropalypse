@@ -344,6 +344,7 @@ object Bot {
         if (s3 != null) {
             // download
             jda.onCommand("download") { event ->
+                val reply = event.deferReply(event.isFromGuild)
                 if (!event.isFromGuild) {
                     // find all guilds with data available for this user
                     val objects = s3.listObjectsV2(bucket, "archive/")
@@ -352,32 +353,32 @@ object Bot {
                         .map { it.key.split('/')[1] }
                         .distinct()
                     if (guilds.isEmpty()) {
-                        event.reply("You do not currently have any archived images.").queue()
+                        reply.setContent("You do not currently have any archived images.")
                     } else if (guilds.size == 1) {
-                        sendDownloadLink(event, guilds.first().toLong())
+                        setDownloadLink(event, reply, guilds.first().toLong())
                     } else {
-                        event.reply(MessageCreate {
-                            content = "From which server would you like to download your archived images?"
-                            components += row(StringSelectMenu("download:guild") {
-                                for (guildId in guilds) {
-                                    val guild = jda.getGuildById(guildId) ?: continue
-                                    option(guild.name, guildId)
-                                }
-                            })
-                        }).queue()
+                        reply.setContent("From which server would you like to download your archived images?")
+                        reply.setComponents(row(StringSelectMenu("download:guild") {
+                            for (guildId in guilds) {
+                                val guild = jda.getGuildById(guildId)?.name ?: "<unknown server>"
+                                option(guild, guildId)
+                            }
+                        }))
                     }
                 } else {
-                    sendDownloadLink(event, event.guild!!.idLong)
+                    setDownloadLink(event, reply, event.guild!!.idLong)
                 }
+                reply.queue()
             }
             jda.onStringSelect("download:guild") { event ->
+                val reply = event.deferEdit().setReplace(true)
                 val guildId = event.values.first().toLong()
                 val guild = jda.getGuildById(guildId)
-                if (guild == null) {
-                    event.editMessage_("That server no longer exists.", replace = true).queue()
-                } else {
-                    sendDownloadLink(event, guildId)
-                }
+                if (guild == null)
+                    reply.setContent("That server no longer exists.")
+                else
+                    setDownloadLink(event, reply, guildId)
+                reply.queue()
             }
             // forget-me
             jda.onCommand("forget-me") { event ->
@@ -470,11 +471,12 @@ object Bot {
         logger.atInfo().log("Stopped")
     }
 
-    private fun sendDownloadLink(interaction: IReplyCallback, guildId: Long) {
+    private fun setDownloadLink(interaction: IReplyCallback, reply: MessageRequest<*>, guildId: Long) {
         if (s3 == null) {
             logger.atWarn().setCause(Exception()).log("#sendDownloadLink called when s3 is null?")
             return
         }
+        val guildName = jda.getGuildById(guildId)?.name ?: "<unknown server>"
         val key = "archive/${guildId}/${interaction.user.idLong}.zip"
         val url: URL?
         = if (s3.doesObjectExist(bucket, key)) {
@@ -488,14 +490,13 @@ object Bot {
             null
         }
         if (url == null) {
-            interaction.reply("Could not find any archived images for you in ${jda.getGuildById(guildId)!!.name}.")
-                .setEphemeral(interaction.isFromGuild).queue()
+            reply.setContent("Could not find any archived images for you in $guildName.")
         } else {
-            interaction.reply_(buildString {
-                append("Your images from ").append(jda.getGuildById(guildId)!!.name)
+            reply.setContent(buildString {
+                append("Your images from ").append(guildName)
                 append(" will be available for download at the following link for one hour:\n<")
                 append(url).append('>')
-            }).setEphemeral(interaction.isFromGuild).queue()
+            })
         }
     }
 
