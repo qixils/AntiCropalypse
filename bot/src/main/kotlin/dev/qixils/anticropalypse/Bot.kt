@@ -435,10 +435,14 @@ object Bot {
         logger.atInfo().log("=====")
         logger.atInfo().log { "Logged in as ${jda.selfUser.asTag} (${jda.selfUser.id})" }
         logger.atInfo().log { "Serving ${jda.guilds.size} guilds" }
-        for (guildId in state.inProgressScans.keys) {
+
+        val guildIterator = state.inProgressScans.keys.iterator()
+        while (guildIterator.hasNext()) {
+            val guildId = guildIterator.next()
             val guild = jda.getGuildById(guildId)
             if (guild == null) {
                 logger.atWarn().log { "Guild $guildId no longer exists, skipping scan" }
+                guildIterator.remove()
             } else {
                 logger.atInfo().log { "Resuming scan for ${guild.name} ($guildId)" }
                 launch(scanJob) { scan(guild) }
