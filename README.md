@@ -4,6 +4,8 @@ As of today, Discord's CDN now strips trailing data from PNGs in-flight, meaning
 the aCropalypse vulnerability. As such, this bot is no longer necessary, but it will remain online to allow users to
 download their archived images.
 
+The original README for the bot can be found below.
+
 # [AntiCropalypse](https://anticropalypse.qixils.dev)
 
 Discord bot which searches for and deletes images vulnerable to the aCropalypse exploit
