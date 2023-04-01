@@ -76,6 +76,7 @@ object Bot {
         }
     }
 
+    private const val deprecationMessage = "As of March 31st, 2023, Discord's CDN now strips trailing data from PNGs in-flight, meaning that even old uploads are now safe from the aCropalypse vulnerability. Thus, scans have been disabled, though the bot will remain online to allow users to download their archived images."
     private val urlPattern = Pattern.compile("https?://\\S+\\.[Pp][Nn][Gg]")
     private val requiredPermissions = setOf(Permission.VIEW_CHANNEL, Permission.MESSAGE_HISTORY)
     private val rootDir = Path("data")
@@ -180,6 +181,10 @@ object Bot {
         }.queue()
         // purge
         jda.onCommand("purge") { event ->
+            if (true) {
+                event.reply(deprecationMessage).setEphemeral(true).queue()
+                return@onCommand
+            }
             if (event.guild!!.idLong in state.inProgressScans) {
                 event.reply("I'm already scanning this server! Please wait until I'm done.").setEphemeral(true).queue()
                 return@onCommand
@@ -212,6 +217,10 @@ object Bot {
             event.editMessage_("Okay, I won't delete any images.", replace = true).queue()
         }
         jda.onButton("purge:yes") { event -> coroutineScope {
+            if (true) {
+                event.editMessage(deprecationMessage).queue()
+                return@coroutineScope
+            }
             if (event.guild!!.idLong in state.inProgressScans) {
                 event.editMessage("I'm already scanning this server! Please wait until I'm done.").queue()
                 return@coroutineScope
@@ -232,6 +241,10 @@ object Bot {
         } }
         // count
         jda.onCommand("count") { event -> coroutineScope {
+            if (true) {
+                event.reply(deprecationMessage).setEphemeral(true).queue()
+                return@coroutineScope
+            }
             if (event.guild!!.idLong in state.inProgressScans) {
                 event.reply("I'm already scanning this server! Please wait until I'm done.").setEphemeral(true).queue()
                 return@coroutineScope
@@ -901,8 +914,6 @@ fun JDA.onSubCommand(name: String, timeout: Duration? = null, consumer: suspend 
     if (it.fullCommandName == name)
         consumer(it)
 }
-
-private val whitespace = Pattern.compile("\\s")
 
 fun MessageChannel.splitAndSend(text: String): RestAction<*> {
     var current = ""
