@@ -586,7 +586,7 @@ object Bot {
         }
 
         // scan channels
-        if (scanState.closing == null) {
+        if (false && scanState.closing == null) {
             coroutineScope {
                 for (channel in guild.channels) {
                     launch { tryScan(channel, scanState) }
