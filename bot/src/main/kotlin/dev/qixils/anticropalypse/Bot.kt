@@ -686,11 +686,21 @@ object Bot {
                     continue
                 }
                 // send message
-                val channel = retryUntilSuccess<PrivateChannel, ErrorResponseException>(
-                    0,
-                    { e -> if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e },
-                    { user.openPrivateChannel().await() }
-                )
+                val channel = try {
+                    retryUntilSuccess<PrivateChannel, ErrorResponseException>(
+                        0,
+                        { e -> if (e.errorResponse != ErrorResponse.OPEN_DM_TOO_FAST) throw e },
+                        { user.openPrivateChannel().await() }
+                    )
+                } catch (e: ErrorResponseException) {
+                    logger.atWarn().log { "Failed to open DM with user $userId from guild ${guild.name} (${guild.id}): ${e.meaning}" }
+                    closingState.archivesNotMessaged.add(userId)
+                    continue
+                } catch (e: Exception) {
+                    logger.atWarn().setCause(e).log { "Failed to open DM with user $userId from guild ${guild.name} (${guild.id})" }
+                    closingState.archivesNotMessaged.add(userId)
+                    continue
+                }
                 val isFirstDM = channel.latestMessageIdLong == 0L && channel.iterableHistory.takeAsync(1).await().isEmpty()
                 val message = if (isFirstDM) buildString {
                     append("Hi there! A server you are or were in, ").append(guild.name)
