@@ -693,7 +693,7 @@ object Bot {
                         { user.openPrivateChannel().await() }
                     )
                 } catch (e: ErrorResponseException) {
-                    logger.atWarn().log { "Failed to open DM with user $userId from guild ${guild.name} (${guild.id}): ${e.meaning}" }
+                    logger.atWarn().log { "Failed to open DM with user $userId from guild ${guild.name} (${guild.id}): ${e.errorCode} ${e.meaning}" }
                     closingState.archivesNotMessaged.add(userId)
                     continue
                 } catch (e: Exception) {
